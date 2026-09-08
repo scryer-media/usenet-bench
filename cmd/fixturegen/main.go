@@ -33,7 +33,7 @@ func (values *repeatedFlag) Set(value string) error {
 func main() {
 	var config generator.Config
 	var fixtureIDs repeatedFlag
-	var bytesPerFile, multiVolumeBytesPerFile, compressibleBytesPerFile, bluRayLargeFile, bluRayMediumFile, bluRaySmallFile, directMKVBytes string
+	var bytesPerFile, multiVolumeBytesPerFile, compressibleBytesPerFile, bluRayLargeFile, bluRayMediumFile, bluRaySmallFile, zip64LargeFile, directMKVBytes string
 	var list, directMKV bool
 
 	flag.StringVar(&config.MatrixPath, "matrix", "fixtures/matrix.json", "fixture matrix JSON path")
@@ -43,6 +43,10 @@ func main() {
 	flag.StringVar(&config.PAR2DockerfilePath, "par2-dockerfile", "docker/par2/Dockerfile", "PAR2 generator image Dockerfile path")
 	flag.StringVar(&config.SevenZipToolchainPath, "sevenzip-toolchain", "docker/sevenzip/toolchain.json", "pinned 7-Zip writer JSON path")
 	flag.StringVar(&config.SevenZipDockerfilePath, "sevenzip-dockerfile", "docker/sevenzip/Dockerfile", "7-Zip writer image Dockerfile path")
+	flag.StringVar(&config.GNUToolsToolchainPath, "gnutools-toolchain", "docker/gnutools/toolchain.json", "pinned GNU tar/gzip/xz/Info-ZIP/cksfv writer JSON path")
+	flag.StringVar(&config.GNUToolsDockerfilePath, "gnutools-dockerfile", "docker/gnutools/Dockerfile", "GNU tools writer image Dockerfile path")
+	flag.StringVar(&config.UUToolchainPath, "uudeview-toolchain", "docker/uudeview/toolchain.json", "pinned UUDeview uuencode oracle JSON path")
+	flag.StringVar(&config.UUDockerfilePath, "uudeview-dockerfile", "docker/uudeview/Dockerfile", "UUDeview oracle image Dockerfile path")
 	flag.StringVar(&config.OutputDir, "output", "generated", "directory for generated fixtures (never overwritten)")
 	flag.StringVar(&config.DockerBinary, "docker", "docker", "Docker executable")
 	flag.StringVar(&bytesPerFile, "bytes-per-file", "150MiB", "target size for each ordinary incompressible movie file")
@@ -53,11 +57,12 @@ func main() {
 	flag.IntVar(&config.BluRayMediumFileCount, "bluray-medium-file-count", 8, "menu/extra media streams for bluray-disc fixtures")
 	flag.StringVar(&bluRaySmallFile, "bluray-small-file-bytes", "128KiB", "small metadata-file size for bluray-disc fixtures")
 	flag.IntVar(&config.BluRaySmallFileCount, "bluray-small-file-count", 512, "small metadata files for bluray-disc fixtures")
+	flag.StringVar(&zip64LargeFile, "zip64-large-file-bytes", "5GiB", "single-member size for the zip64 large fixture; below 4GiB the archive is no longer zip64 and the lane is refused")
 	flag.IntVar(&config.Workers, "workers", 4, "independent fixtures to generate concurrently")
 	flag.BoolVar(&directMKV, "direct-mkv", false, "generate only the direct MKV fixture (no archive)")
 	flag.StringVar(&directMKVBytes, "direct-mkv-bytes", "150MiB", "payload size for --direct-mkv")
 	flag.Var(&fixtureIDs, "fixture", "one expanded fixture id to generate (repeatable; defaults to all)")
-	flag.BoolVar(&config.BuildImages, "build-images", true, "build the pinned RARLAB, PAR2 and 7-Zip writer images before generation")
+	flag.BoolVar(&config.BuildImages, "build-images", true, "build the pinned RARLAB, PAR2, 7-Zip, GNU tools and UUDeview images before generation")
 	flag.BoolVar(&list, "list", false, "print expanded fixture cases and exit")
 	flag.Parse()
 
@@ -109,6 +114,10 @@ func main() {
 	config.BluRayMediumFileBytes, err = parseBytes(bluRayMediumFile)
 	if err != nil {
 		fatal(fmt.Errorf("parse --bluray-medium-file-bytes: %w", err))
+	}
+	config.Zip64LargeFileBytes, err = parseBytes(zip64LargeFile)
+	if err != nil {
+		fatal(fmt.Errorf("parse --zip64-large-file-bytes: %w", err))
 	}
 	config.BluRaySmallFileBytes, err = parseBytes(bluRaySmallFile)
 	if err != nil {

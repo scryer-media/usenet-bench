@@ -36,6 +36,7 @@ type Config struct {
 	TLSValidation    benchmark.TLSValidation
 	ServerLink       benchmark.ServerLinkProfile
 	StorageProfile   benchmark.StorageProfile
+	ArticleProfile   benchmark.ArticleProfile
 	CompleteVolume   string
 	IncompleteVolume string
 	FixtureDir       string
@@ -130,6 +131,17 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	article, err := benchmark.ResolveArticleProfile(required(getenv, "BENCH_ARTICLE_PROFILE_ID"))
+	if err != nil {
+		return Config{}, err
+	}
+	articleBytes, err := parseUint(getenv("BENCH_ARTICLE_RAW_BYTES"), "BENCH_ARTICLE_RAW_BYTES")
+	if err != nil {
+		return Config{}, err
+	}
+	if uint64(article.RawBytes) != articleBytes {
+		return Config{}, fmt.Errorf("BENCH_ARTICLE_RAW_BYTES %d does not match article profile %q", articleBytes, article.ID)
+	}
 
 	startupTimeout, err := parseDurationDefault(getenv("CLIENT_STARTUP_TIMEOUT"), 3*time.Minute, "CLIENT_STARTUP_TIMEOUT")
 	if err != nil {
@@ -153,6 +165,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		TLSValidation:    benchmark.TLSValidation(required(getenv, "BENCH_TLS_VALIDATION")),
 		ServerLink:       link,
 		StorageProfile:   storage,
+		ArticleProfile:   article,
 		CompleteVolume:   required(getenv, "BENCH_STORAGE_COMPLETE_VOLUME"),
 		IncompleteVolume: required(getenv, "BENCH_STORAGE_INCOMPLETE_VOLUME"),
 		FixtureDir:       required(getenv, "BENCH_FIXTURE_DIR"),

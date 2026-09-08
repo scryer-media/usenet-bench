@@ -28,6 +28,7 @@ import (
 	"github.com/scryer-media/usenet-bench/internal/netcheck"
 	"github.com/scryer-media/usenet-bench/internal/nntp"
 	"github.com/scryer-media/usenet-bench/internal/rawstack"
+	"github.com/scryer-media/usenet-bench/internal/uucodec"
 )
 
 func main() {
@@ -93,8 +94,9 @@ func seed(args []string) error {
 	flags := flag.NewFlagSet("seed", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
 	var config nntp.NyuuSeedConfig
-	var nyuuDockerfile, passwordFile string
-	var buildNyuuImage bool
+	var nyuuDockerfile, passwordFile, articleSize string
+	var uuDockerfile, uuToolchainPath, uuAddr string
+	var buildNyuuImage, buildUUImage, uuTLS bool
 	flags.StringVar(&config.FixtureDir, "fixture-dir", "", "generated fixture directory")
 	flags.StringVar(&config.RunID, "run-id", "", "unique seed run identifier")
 	flags.StringVar(&config.NZBPath, "nzb", "", "NZB output path (defaults inside the fixture directory)")
@@ -110,15 +112,69 @@ func seed(args []string) error {
 	flags.StringVar(&config.Password, "password", "", "NNTP password")
 	flags.StringVar(&passwordFile, "password-file", "", "file containing the NNTP password")
 	flags.StringVar(&config.Group, "group", "alt.binaries.test", "newsgroup")
-	flags.IntVar(&config.SegmentBytes, "segment-bytes", 750<<10, "raw bytes per yEnc article")
+	flags.StringVar(&articleSize, "article-size", benchmark.Article750K, "declared article-size stratum the corpus is posted at: "+strings.Join(benchmark.ArticleProfileIDs(), ", "))
+	flags.IntVar(&config.SegmentBytes, "segment-bytes", 0, "raw bytes per article; 0 takes the size from --article-size")
+	flags.StringVar(&uuToolchainPath, "uu-toolchain", "docker/uudeview/toolchain.json", "pinned UUDeview toolchain used by the uuencode lane")
+	flags.StringVar(&uuDockerfile, "uu-dockerfile", "docker/uudeview/Dockerfile", "pinned UUDeview image Dockerfile")
+	flags.BoolVar(&buildUUImage, "build-uu-image", true, "build the pinned UUDeview image before posting a uuencoded fixture")
+	flags.StringVar(&uuAddr, "uu-post-addr", "127.0.0.1:119", "host:port of the NNTP server reachable from this process; the uuencode lane is posted from here rather than by Nyuu inside the Docker network, so it needs an address this machine can dial — the shaper stack publishes plaintext 119 on loopback and passes it through to the same server")
+	flags.BoolVar(&uuTLS, "uu-post-tls", false, "dial --uu-post-addr with TLS")
 	if err := flags.Parse(args); err != nil {
 		return err
+	}
+	article, err := benchmark.ResolveArticleProfile(articleSize)
+	if err != nil {
+		return err
+	}
+	// The named stratum is authoritative; the raw override exists so a
+	// deliberate off-stratum experiment is possible, and disagreeing with the
+	// name it is filed under is refused rather than silently preferred.
+	if config.SegmentBytes == 0 {
+		config.SegmentBytes = article.RawBytes
+	} else if config.SegmentBytes != article.RawBytes {
+		return fmt.Errorf("--segment-bytes %d does not match --article-size %s (%d bytes)", config.SegmentBytes, article.ID, article.RawBytes)
 	}
 	password, err := resolvePassword(config.Password, passwordFile)
 	if err != nil {
 		return err
 	}
 	config.Password = password
+	// A fixture declares its own encoding, and the two encodings need
+	// different posters: Nyuu writes yEnc and cannot write uuencode at all.
+	// The manifest decides, so an operator never has to remember which lane a
+	// fixture id belongs to.
+	manifest, err := fixture.LoadGeneratedManifest(filepath.Join(config.FixtureDir, "fixture-manifest.json"))
+	if err != nil {
+		return err
+	}
+	if manifest.Case.PostEncodingOrDefault() == fixture.UUEncodeEncoding {
+		toolchain, err := uucodec.LoadToolchain(uuToolchainPath)
+		if err != nil {
+			return err
+		}
+		if buildUUImage {
+			if err := uucodec.BuildImage(context.Background(), config.DockerBinary, uuDockerfile, toolchain); err != nil {
+				return err
+			}
+		}
+		result, err := nntp.SeedUUEncoded(context.Background(), nntp.UUSeedConfig{
+			DockerBinary: config.DockerBinary,
+			UUToolchain:  toolchain,
+			FixtureDir:   config.FixtureDir,
+			RunID:        config.RunID,
+			NZBPath:      config.NZBPath,
+			Addr:         uuAddr,
+			TLS:          uuTLS,
+			Username:     config.Username,
+			Password:     config.Password,
+			Group:        config.Group,
+			ArticleBytes: config.SegmentBytes,
+		})
+		if err != nil {
+			return err
+		}
+		return printJSON(result)
+	}
 	if buildNyuuImage {
 		if err := nntp.BuildNyuuImage(context.Background(), nntp.NyuuImageConfig{
 			DockerBinary: config.DockerBinary,
@@ -174,7 +230,7 @@ func plan(args []string) error {
 	flags := flag.NewFlagSet("plan", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
 	var fixturesCSV, excludeFixturesCSV, corpusPath, clientsCSV, archiveToolchainsCSV, transportsCSV, targetsCSV, output, profile, serverLink string
-	var storageProfileID, nfsLink string
+	var storageProfileID, nfsLink, articleSize string
 	var repetitions int
 	var seed int64
 	var serverEgressBPS, serverBurstBytes uint64
@@ -197,8 +253,13 @@ func plan(args []string) error {
 	flags.StringVar(&nfsLink, "nfs-link", "", "required NFS link profile for an nfs storage profile: nas-100mbit, nas-1gbit, or nas-2.5gbit")
 	flags.IntVar(&repetitions, "repetitions", 20, "measured randomized blocks per fixture/client/transport")
 	flags.Int64Var(&seed, "seed", 20260802, "deterministic scheduling seed")
+	flags.StringVar(&articleSize, "article-size", benchmark.Article750K, "article-size stratum the corpus was seeded at: "+strings.Join(benchmark.ArticleProfileIDs(), ", "))
 	flags.StringVar(&output, "output", "", "plan JSON output path")
 	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	article, err := benchmark.ResolveArticleProfile(articleSize)
+	if err != nil {
 		return err
 	}
 	if output == "" {
@@ -215,7 +276,7 @@ func plan(args []string) error {
 		}
 		fixtureIDs = corpus.FixtureIDs
 	}
-	fixtureIDs, err := excludeFixtures(fixtureIDs, splitCSV(excludeFixturesCSV))
+	fixtureIDs, err = excludeFixtures(fixtureIDs, splitCSV(excludeFixturesCSV))
 	if err != nil {
 		return err
 	}
@@ -252,6 +313,7 @@ func plan(args []string) error {
 		Profile:           profile,
 		ServerLink:        link,
 		StorageProfile:    storage,
+		ArticleProfile:    article,
 		Repetitions:       repetitions,
 		Seed:              seed,
 		ClientExclusions:  exclusions,

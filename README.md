@@ -4,8 +4,9 @@ A reproducible, product-neutral download benchmark for **Weaver**, **SABnzbd**
 and **NZBGet**.
 
 It does not guess what a "typical Usenet release" looks like. It generates a
-declared matrix of clean and deliberately damaged multi-volume RAR fixtures on
-pinned RARLAB and PAR2 toolchains, posts them once to a local
+declared matrix of clean and deliberately damaged multi-volume archive
+fixtures — RAR, 7z, zip, tar, xz — on pinned RARLAB, 7-Zip, PAR2 and
+distribution toolchains, posts them once to a local
 [e2e-nntp](https://github.com/scryer-media/e2e-nntp) server behind a
 server-side bandwidth shaper, and then runs every client through the same
 randomized, sequential plan — one fresh client process or container per run,
@@ -25,10 +26,17 @@ downloaded data and run artifacts are ignored by git and never committed.
 - [Repository layout](#repository-layout)
 - [The fixture matrix](#the-fixture-matrix)
   - [The 7z lane](#the-7z-lane)
+  - [Containers that are not RAR](#containers-that-are-not-rar)
+  - [Compression lanes](#compression-lanes)
+  - [Checksum sidecars](#checksum-sidecars)
   - [The Blu-ray disc topology](#the-blu-ray-disc-topology)
   - [Repair profiles](#repair-profiles)
   - [Posting order](#posting-order)
+  - [Article size](#article-size)
+  - [The uuencoded lane](#the-uuencoded-lane)
   - [Pinned 7-Zip writer](#pinned-7-zip-writer)
+  - [Pinned distribution writers](#pinned-distribution-writers)
+  - [Pinned uuencode oracle](#pinned-uuencode-oracle)
 - [Step by step](#step-by-step)
   - [1. Generate fixtures](#1-generate-fixtures)
   - [2. Build the NNTP server image](#2-build-the-nntp-server-image)
@@ -53,7 +61,7 @@ downloaded data and run artifacts are ignored by git and never committed.
 | Go 1.26+ | every tool here is `go run ./cmd/…`; the module has one dependency (`zeebo/blake3`) |
 | Docker with Compose v2 | the RARLAB, PAR2, Nyuu, NNTP-server and shaper images, and the Docker client lane. Fixtures and the seeded corpus are always made on a Docker host; measuring on macOS or Windows does not need one (see [Raw stack](#raw-stack-the-server-side-without-docker)) |
 | `linux/amd64` emulation on arm64 hosts | the RARLAB and Nyuu images are `linux/amd64` on purpose (see below); Docker Desktop provides it, on plain Linux run `docker run --privileged --rm tonistiigi/binfmt --install amd64` |
-| ~10 GiB free disk | a full corpus with the `bluray-disc` fixture; smoke runs need far less |
+| ~25 GiB free disk | a full corpus with the `bluray-disc` fixture; smoke runs need far less |
 | Native product installs | only for the optional `macos-native` / `windows-native` lanes |
 
 Every command below is run from this directory. Paths under `/scratch/…` are
@@ -118,7 +126,7 @@ lists every subcommand; `-h` on any of them prints its options.
 | `configs/server/compose-nfs.example.yml` | The throttled NFS export used by the `nfs-*` storage profiles |
 | `configs/server/compose-seeded.example.yml` | Overlay that starts the NNTP server from a pre-seeded corpus image |
 | `configs/chains/*.example.json` | Whole-session descriptions: `latency-series` on the Docker stack, `raw-native` on the raw one |
-| `docker/` | Dockerfiles for the pinned RARLAB writers, the official 7-Zip build, `par2cmdline-turbo`, Nyuu, the shaper and the throttled NFS server |
+| `docker/` | Dockerfiles for the pinned RARLAB writers, the official 7-Zip build, the GNU / Info-ZIP distribution writers, the UUDeview encoder and decoder, `par2cmdline-turbo`, Nyuu, the shaper and the throttled NFS server |
 | `fixtures/matrix.json`, `fixtures/corpus.json` | The declared fixture matrix and corpus description |
 | `internal/` | The Go packages behind the commands |
 
@@ -131,7 +139,7 @@ summary:
 | Class | What it stands for | Sets |
 | --- | --- | --- |
 | `headline` | The common shape of a real post: a stored (`-m0`), multi-volume RAR of already-compressed media. One clean set per source-locked RARLAB writer era (3.93, 4.20, 5.00, 6.24, 7.23), each posted clear, with encrypted headers (`-hp`) and with data-only encryption (`-p`), because most real posts are not encrypted and the encrypted forms are measured beside the clear one, never instead of it. PAR2 repair is part of the common case too: the stored form from the 4.20, 5.00 and 7.23 writers is posted in the same three forms with light damage (`par2-light`) and with an interior volume listed in the NZB but never posted (`par2-heavy-withheld`). | 8 sets, 33 fixtures |
-| `breadth` | Shapes a client meets less often and must still handle: a four-movie stored set with RAR5 quick-open records, the official 7-Zip 7z container, a stored Blu-ray-shaped topology in scattered NZB order, PAR2 over 7z, and RAR recovery volumes. RAR compression is deliberately absent: already-compressed media is not recompressed in the wild, so a compressed lane would measure a shape nobody posts. | 7 sets, 7 fixtures |
+| `breadth` | Shapes a client meets less often and must still handle: a four-movie stored set with RAR5 quick-open records, the official 7-Zip 7z container, a stored Blu-ray-shaped topology in scattered NZB order, PAR2 over 7z, RAR recovery volumes, the container families that are not RAR (`.tar`, `.tar.gz`, `.tar.xz`, a bare `.xz`, Info-ZIP and 7-Zip zips including a spanned set, ZipCrypto and AES, zip64 and a zip written into a pipe), the 7z codec family (LZMA, LZMA2 solid and non-solid, PPMd, BZip2, data- and header-encrypted), RAR4 and RAR5 compression, `.sfv` sidecars, a raw media file posted with no container at all, and one uuencoded post. | 34 sets, 37 fixtures |
 
 The summarizer pools per-fixture results only within a class (see
 [Summarize](#7-summarize)); the headline aggregate is the figure for the common
@@ -154,24 +162,46 @@ four bits of deterministic per-sample noise (recorded in the manifest as
 compress, and the archive still clears the floor. The floor is enforced on the
 posted bytes, so a repair fixture's PAR2 volumes count and its withheld
 volume does not.
+
+A set may declare `bytes_per_file` when the class default would not clear the
+floor after its writer has run. The compression lanes do: one 224 MiB member,
+or four 56 MiB ones where the set is multi-input, so even the strongest of the
+pinned codecs still posts well over 100 MiB. The declared size scales with
+`--bytes-per-file`, so a reduced smoke run shrinks those lanes in proportion
+instead of ignoring the flag. Every manifest records `compression` with the
+payload bytes, the archive bytes and the ratio between them, so what a lane
+actually compressed to is a fact in the artifact rather than a claim here.
 Together they cover the RARLAB writer eras and their archive families across:
 
 | Axis | Values |
 | --- | --- |
 | Writer era | RAR 3.93, 4.20, 5.00, 6.24, 7.23 and 7-Zip 26.02 (official upstream Linux releases, SHA-256 verified in the image build) |
-| Archive format | legacy RAR4 (3.93 / 4.20 writers), RAR5 (5.00 / 6.24 / 7.23 writers, explicit `-ma5`), or 7z (official 7-Zip build) |
-| Compression | store (`-m0`) or release-style normal compression (`-m5`, solid where declared, maximum dictionary, RAR5 quick-open disabled except on the `rar5-7-quickopen` set, which keeps a quick-open record for every header) |
-| Solidity | non-solid, solid |
-| Encryption | none, data encryption, encrypted headers |
+| Archive format | legacy RAR4 (3.93 / 4.20 writers), RAR5 (5.00 / 6.24 / 7.23 writers, explicit `-ma5`), 7z (official 7-Zip build), `tar`, `xz`, `zip`, or `media` — the payload posted with no container around it |
+| Compression | `store`, `normal` and `best` for RAR (`-m0`, `-m3`, `-m5`, solid where declared, RAR5 quick-open disabled except on the `rar5-7-quickopen` set, which keeps a quick-open record for every header); `gzip`, `xz`, `deflate`, `lzma`, `lzma2`, `ppmd` and `bzip2` for the containers that offer them |
+| Solidity | non-solid, solid (RAR and 7z only; tar, zip and xz compress each member, or the whole stream, without a solid mode) |
+| Encryption | none, data encryption, encrypted headers (headers only where the container has them: RAR and 7z) |
 | Input data | incompressible, moderately compressible |
+| Encoding | `yenc` everywhere except the one `uuencode` lane |
+| Sidecar | none, or an `.sfv` checksum list posted beside the archive |
+| ZIP structure | classic, or one of the three [zip64 and streamed](#zip64-and-streamed-zips) shapes: `zip64-forced`, `zip64-large`, `streamed` |
 
-That yields 16 clean RAR fixtures: the 15 headline stored lanes (five writer
+Format, compression, solidity, encryption and ZIP structure are validated
+against each other when the matrix loads, not when the writer runs: a solid
+tar, a header-encrypted zip, a `-mc` text-compression flag outside RAR4, PPMd
+in RAR5, an `.xz` split into volumes, a `zip_structure` on a container that has
+no ZIP records at all, a streamed zip that also asks to be split, or a
+container whose pinned `archive_writer` is unnamed are all authoring mistakes,
+and each is refused by name with the reason.
+
+That yields 16 clean stored RAR fixtures: the 15 headline lanes (five writer
 eras, each clear, header-encrypted and data-encrypted) and the four-movie
-quick-open set. Every RAR lane is stored: the generator still writes
-release-style `-m5` compression and the compressible payload, but the
-checked-in matrix uses neither, because already-compressed media is not
-recompressed in the wild. `writer_era` is deliberately separate from
-`archive_format`: RAR 6 and 7 are writer releases, not new on-disk formats.
+quick-open set. Every *headline* RAR lane is stored, because already-compressed
+media is not recompressed in the wild and a compressed headline lane would
+weight the common-case figure with a shape nobody posts; the compressed RAR
+lanes are breadth and are never pooled with it (see
+[Compression lanes](#compression-lanes)). `writer_era` is deliberately separate
+from `archive_format`: RAR 6 and 7 are writer releases, not new on-disk
+formats.
 
 ### The 7z lane
 
@@ -179,15 +209,22 @@ recompressed in the wild. `writer_era` is deliberately separate from
 (see [Pinned 7-Zip writer](#pinned-7-zip-writer)). A set that uses it names the
 writer with `archive_writer`; `generator_toolchain` still names the RARLAB
 image, which supplies the FFmpeg payload renderer for every lane. Two clean
-7z fixtures (stored, and stored with encrypted headers) and one 7z repair
-fixture are in the corpus, all breadth:
+stored 7z fixtures (clear, and with encrypted headers), one 7z repair fixture
+and seven compressed ones are in the corpus, all breadth:
 
 | Axis | 7z values |
 | --- | --- |
-| Compression | store (`-mx0 -m0=Copy`) or LZMA2 at the writer default (`-mx5`) |
+| Compression | store (`-mx0 -m0=Copy`), the writer's own default (`-mx5`), `-mx9`, or a named member codec: `lzma`, `lzma2`, `ppmd`, `bzip2` (each `-mx5` with `-m0=<codec>`, so the lane exercises that decoder and not whatever a later 7-Zip release would pick) |
 | Solidity | `-ms=off` / `-ms=on` |
 | Encryption | none, data (`-p`), encrypted headers (`-p` with `-mhe=on`) |
 | Volumes | `-v<volume_size>`, so members are `fixture.7z.001`, `.002`, … |
+
+The codec lanes exist because "7z" is not one decoder. LZMA, LZMA2, PPMd and
+BZip2 are four independent implementations behind one container, and a client
+that ships its own 7z reader can support some and not others; a corpus with
+only the default codec would report that as full 7z support. Both encrypted
+LZMA2 lanes are multi-volume, so the encrypted header has to be read from the
+first volume before the rest of the set means anything.
 
 `rar-recovery-volume-*` is rejected at matrix validation for a 7z set: RAR
 recovery volumes are a RAR container feature, and pairing them with 7z is an
@@ -199,6 +236,177 @@ tested with RARLAB's own `rar t`. 7z fixtures are *extracted* with the pinned
 `7zz` and every extracted member is checked against the payload's BLAKE3
 digest, because 7-Zip's own test does not prove the extracted bytes match the
 oracle.
+
+### Containers that are not RAR
+
+`archive_format` also takes `tar`, `xz`, `zip` and `media`. They are all
+breadth, and none of them changes the headline figure.
+
+| Format | What is posted | Writer |
+| --- | --- | --- |
+| `tar` | `fixture.tar`, `fixture.tar.gz`, `fixture.tar.xz`; single-member and four-member | GNU `tar` with `--gzip` / `--xz` |
+| `xz` | a bare `fixture.mkv.xz` — one compressed stream with no container around it | `xz -9 --threads=1` |
+| `zip` | Info-ZIP stored, Info-ZIP deflated, an Info-ZIP spanned set (`fixture.z01`, `.z02`, `.z03`, `fixture.zip`), an Info-ZIP ZipCrypto zip, a 7-Zip deflated zip, a 7-Zip AES-256 zip, and the three [zip64 and streamed](#zip64-and-streamed-zips) shapes | Info-ZIP `zip`, or `7zz -tzip` where the set names it |
+| `media` | the payload file itself, posted with no archive at all | none — the bytes are the payload |
+
+The two zip writers are both there on purpose. Info-ZIP implements only the
+original ZipCrypto stream cipher, which is what almost every encrypted zip in
+the wild carries; 7-Zip's ZIP writer is where AES-256 zips come from. They are
+different code paths in every reader, so the manifest labels each lane's
+`encryption` and the set id says which writer produced it
+(`zip-zipcrypto-…` against `zip-7zip-aes-…`) rather than leaving "encrypted
+zip" to mean two different things.
+
+#### Zip64 and streamed zips
+
+Zip64 is a second parser inside every ZIP reader, not a bigger version of the
+first one. Past 4 GiB — or when a writer is told to use it regardless — the
+32-bit size, offset and entry-count fields hold `0xFFFFFFFF` and the real
+numbers move into a zip64 extra field on each entry, a zip64
+end-of-central-directory record and a locator that points at it. A reader that
+never learned those structures does not read a smaller amount of the archive;
+it fails to find the central directory at all. The stored, deflated, spanned
+and encrypted lanes above are all classic zips, so none of them reaches that
+code.
+
+Two breadth lanes do, one for each of the two ways a real zip64 archive comes
+about, and a third covers the other structure a classic zip lane never reaches:
+
+| Fixture | Shape | Writer |
+| --- | --- | --- |
+| `zip-zip64-forced-…` | the zip64 structures over an ordinary 150 MiB payload: the records and extra fields are there although nothing in the archive needs 64 bits | Info-ZIP `zip -fz` |
+| `zip-zip64-large-…` | a genuine zip64 archive holding one member of 5 GiB, where the 32-bit fields really cannot hold the sizes and the local header offset | `7zz -tzip`, which switches to zip64 on its own past 4 GiB |
+| `zip-streamed-…` | two 75 MiB members in a zip the writer produced into a pipe, so every member carries general purpose bit 3 and a trailing data descriptor instead of sizes in its local header | Info-ZIP `zip` writing to standard output |
+
+Structure-forced and size-forced are not the same test. The forced lane proves
+a reader handles the zip64 records themselves, at a size where a reader that
+quietly ignored them would still find everything it needed; a client can pass
+the classic lanes and fail this one on parsing alone. The large lane proves the
+reader's own arithmetic: a size field read as 32 bits, an offset truncated past
+4 GiB, or a member length held in an `int` fails here and nowhere else. Between
+them the two pinned writers are both covered, which matters because they
+produce visibly different archives — 7-Zip adds an NTFS timestamp extra field
+beside the zip64 one, and puts only the fields it needs into it.
+
+The streamed lane is the third parser path. A writer that cannot seek back into
+its own output leaves the sizes and CRC out of the local header, sets bit 3,
+and writes them after the member data instead. A reader that trusts the local
+header rather than the central directory gets zeros.
+
+That lane is deliberately not a zip64 one, and the reason is a property of the
+pinned writer rather than a choice: Info-ZIP `zip -fz` writing into a pipe
+emits an end-of-central-directory record whose central directory offset is
+`0xFFFFFFFF` and then never writes the zip64 record that field points at.
+Neither pinned reader can open the result — `unzip` calls it an invalid zip
+file with overlapped components and refuses, `7zz` reports a headers error —
+and `zip -A`, `zip -FF` and a seekable temporary directory do not repair it.
+7-Zip cannot write a zip into a pipe at all. So a well-formed streamed zip64
+archive is not something either pinned writer produces, and rather than post an
+archive no reader can open, the lane posts a well-formed streamed zip and the
+zip64 structures are covered by the other two. The generator refuses the
+malformed shape by name if a writer ever produces it.
+
+Every zip fixture is parsed back off disk by the harness's own central
+directory reader before it is accepted, and what that reader found is recorded
+in the manifest under `zip_structure` — `zip64`, `zip64_eocd_record`,
+`zip64_eocd_locator`, `zip64_extra_field_entries`, `data_descriptor_entries`
+and `largest_member_bytes`. The manifest field is set from the archive, never
+from the switch the writer was given, and a lane whose declared structure is
+missing from its own bytes is refused rather than written: a `-fz` that stopped
+being honoured, or a large lane shrunk below 4 GiB by
+`--zip64-large-file-bytes`, would otherwise post as an ordinary zip under a
+zip64 id and report zip64 support for a client that had never been asked for
+any. All three lanes are read back with **both** pinned readers,
+7-Zip and Info-ZIP `unzip`, with every member checked against the payload's
+BLAKE3 digest; the 5 GiB member is streamed through each reader rather than
+extracted twice onto disk.
+
+Weaver extracts zip after the download completes, not in-stream — the
+in-stream direct-store path is RAR-only — so these lanes measure the download
+and a post-download extraction, and none of them is a claim about in-stream
+zip handling. Nothing about a client's zip64 or data-descriptor support is
+assumed: a client that cannot open one of these archives produces no payload,
+fails output verification, and is recorded as a DNF with the fixture named,
+the same as any other lane it cannot finish.
+
+One lane nests containers: `rar5-7-tarxz-…` writes a `.tar.xz` and then stores
+it in a multi-volume RAR5 set, which is how a large source tree is actually
+posted. The manifest records the inner container under `inner_archive`, and
+the expected output is the media payload, so a client that stops after
+unpacking the RAR has not finished the fixture.
+
+`tar --create` occasionally exits 1 with `file changed as we read it` when the
+payload was written to a bind-mounted directory moments earlier. The generator
+tolerates that exit only when every line of tar's output is that warning.
+Nothing rests on tar's own verdict: the tarball is immediately extracted with
+the pinned reader and every member is checked against the payload's BLAKE3
+digest before the fixture is accepted.
+
+Verification is by lane, always against the payload oracle and never against
+the writer's own opinion of its output. Tar sets are extracted with GNU `tar`
+and every member hashed. The `xz` lane is decompressed to a pipe and hashed as
+it streams, so a 224 MiB lane never needs a second copy on disk. Plain zips are
+read back with Info-ZIP `unzip`, and the zip64 and streamed lanes with both
+pinned readers. Spanned and AES zips are read back with the pinned 7-Zip: Info-ZIP's own `zip -s-` rejoin silently truncates a set of three
+or more parts and prompts for each disk, which cannot run unattended, while
+7-Zip opens the `.z01`/`.zip` set natively. The `media` lanes are hashed
+directly. The nested lane is unpacked twice, outer then inner.
+
+No client gets a fixture-specific fast path for any of this. The expected
+output of every lane is the media payload, and a client that cannot reach it
+is a DNF that the summarizer counts, with the format named. That is a real
+result: in the pinned images NZBGet exposes only `UnrarCmd` and `SevenZipCmd`,
+so it has no configured reader for a `.tar.gz`, a bare `.xz` or a zip, and the
+tar, xz and zip lanes are expected to DNF for it. `--exclude-client` is not
+used for them, because the point of a breadth lane is to record what a client
+does with a shape it was not built for.
+
+### Compression lanes
+
+RAR compression is present in the matrix, in breadth only:
+
+| Fixture | What it exercises |
+| --- | --- |
+| `rar4-420-normal-…` | RAR4 at the writer's own default, `-m3`, dictionary left at the level's default |
+| `rar4-420-best-ppmd-…` | RAR4 `-m5 -md4096` with `-mc+t`, which forces the PPMd text model on for every member instead of leaving it to the writer's heuristic |
+| `rar4-420-best-solid-…` | RAR4 `-m5` solid over four members |
+| `rar5-7-normal-…` | RAR5 `-m3` from the 7.23 writer |
+| `rar5-7-best-…` (solid and non-solid) | RAR5 `-m5 -md256m` over four members |
+
+`normal` and `best` are RAR's own names for `-m3` and `-m5`, and the matrix
+uses them that way. PPMd is RAR4-only: RAR5 dropped it, so "RAR PPMd" cannot
+mean a RAR5 lane and the matrix refuses `text_compression` outside RAR4 rather
+than quietly writing something else.
+
+The RAR5 dictionary is a deliberate stop short of the maximum. The pinned 7.23
+writer accepts `-md1g`, but it sizes the recorded dictionary to the data — a
+280 MiB member written with `-md1g` records `-md=512m` — and every extractor
+then has to allocate that much to open the archive. A lane that makes a client
+reserve half a gigabyte measures the host's memory, not its pipeline, so these
+lanes stop at `-md256m`, which is also the largest dictionary in common use for
+released RAR5 sets. The flag is in the manifest, so a run under a different
+dictionary is a different fixture rather than a silent change.
+
+Compressed fixtures are verified exactly as stored ones are: extracted with the
+pinned reader for the format, every member checked against the payload's
+BLAKE3 digest, and the manifest's `compression` block recording the payload
+bytes, the archive bytes and the ratio.
+
+### Checksum sidecars
+
+Two fixtures post an `.sfv` beside their data: `rar5-7-store-sfv-…` puts one
+next to a stored multi-volume RAR set, and `media-sfv-…` puts one next to a
+raw media file with no archive at all. An SFV is a CRC32 list, and clients
+treat it as anything from a verification step to a stray file to delete.
+
+The list is written by the harness rather than by `cksfv`, because `cksfv`
+stamps its own version and the current time into the file's comment header and
+a fixture has to be byte-identical when it is regenerated. The pinned `cksfv`
+is still the oracle: the generated list is checked with `cksfv -q -f` against
+the posted files before the fixture is accepted, and the manifest records the
+sidecar under `sidecars` with the toolchain that verified it. The `.sfv` is
+posted with the archive and is not part of the expected output, so a client
+that deletes it after checking it and a client that keeps it are both correct.
 
 ### The Blu-ray disc topology
 
@@ -256,7 +464,11 @@ writer's own reader. Only the damaged input is kept.
 RAR bytes are only ever written by RARLAB's own `rar` and 7z bytes only by the
 official 7-Zip build; add an older writer only when an official, source-locked
 release exists for it. Nothing here pulls historical binaries from mirrors, and
-no distribution fork stands in for an upstream writer.
+no distribution fork stands in for an upstream writer. Where there is no
+upstream release to lock — `tar`, `gzip`, `xz`, `bzip2`, Info-ZIP, `cksfv` —
+the writer is pinned as distribution software instead, by digest-pinned base
+image plus a recorded package version that is re-checked against the built
+image (see [Pinned distribution writers](#pinned-distribution-writers)).
 
 ### Posting order
 
@@ -289,6 +501,90 @@ The manifest records `nzb_order`, `nzb_order_seed` and the complete
 asserts its `<file>` order matches that list, failing the seed loudly if it
 does not: posting order is a measured axis, so a silent reordering would
 invalidate every run over the fixture.
+
+### Article size
+
+How large an article is decides how many round trips a download costs and how
+much per-article header, decode and bookkeeping work a client does for the
+same number of bytes. Two runs at different article sizes are not the same
+measurement, so article size is a stratum, exactly like the server link's fixed
+round trip:
+
+| Id | Decoded bytes per article | What it stands for |
+| --- | --- | --- |
+| `750k` (default) | 768000 | what current posting tools default to |
+| `384k` | 393216 | the realistic lower bound: what a poster configured for 3000 yEnc lines emits, which was the common default before the size crept up, and what a backfill of older posts still hands a client |
+
+At `384k` a fixture posts roughly twice as many articles for the same bytes,
+which is the point: the per-article cost that `750k` hides is what this
+stratum exposes. The corpus makes **no claim** about how Usenet's articles are
+distributed between the two — `384k` is in the matrix because it is a size
+real posts are at and the smallest that is still common, not because some
+share of posts are at it. Sizes are named rather than free-form: an arbitrary
+byte count would multiply the strata without adding a shape any real post has,
+and each one needs its own seeded corpus.
+
+`--article-size` is on `seed`, `plan` and `seed-image`; `--segment-bytes`
+still exists and must agree with it. The profile travels from the plan into
+every run artifact and adapter result as `article_profile`, and into the
+summarizer's pairing key, so a `750k` block and a `384k` block are never
+paired. A plan that does not mention article size resolves to `750k`, which is
+what every plan written before the stratum existed meant, so an old plan keeps
+producing the same comparison.
+
+A chain phase declares `article_size` and the declaration is checked against
+what was actually seeded, not taken on trust. For each posted file the harness
+computes how many articles its manifest size needs at the declared size and
+compares that against the segment count in the seeded NZB; a mismatch fails
+the phase by name, before the shaper is touched, and says to reseed the corpus
+or point the phase at the seed image built for its article size. Article size
+is also part of the seed-image fingerprint, so a corpus seeded at one size can
+never be restored as a cache hit for a phase declaring the other.
+
+### The uuencoded lane
+
+`media-uuencode-store-nonsolid-none-incompressible` posts a 224 MiB raw
+`.mkv` — the same payload the direct-download fixture uses — uuencoded instead
+of yEnc encoded. uuencode predates yEnc and is what an older post carries; a
+client that assumes every body is yEnc fails it, and that failure is worth
+measuring rather than assuming away.
+
+Nyuu writes yEnc and only yEnc, so this lane has its own poster. `nntpbench
+seed` reads the fixture's manifest, sees `encoding: uuencode` and takes that
+path automatically — no operator has to remember which fixture belongs to
+which poster — and Nyuu refuses a non-yEnc fixture by name if it is ever
+handed one directly. The poster encodes the payload, splits it into articles
+at the corpus article size, posts each over plain NNTP `POST` with a
+deterministic message id
+(`bench-<run>-<fixture>-uu-{0filenum}-{0part}@nntp-bench`), and writes the NZB
+itself with the correct per-segment `bytes` and part order.
+
+The split is chosen so that the encoding survives it: uuencode carries 45 raw
+bytes per line, so an article holds `floor(article_bytes / 45)` whole lines,
+the `begin` header rides the first article and the terminator rides the last,
+and concatenating the bodies in part order reproduces the encoder's output
+byte for byte. That is what makes the lane decodable by a client that
+reassembles parts before decoding, which is what clients actually do.
+
+The post is proved before the seed is accepted. The poster reads every article
+back off the server with `BODY`, hands the reassembled stream to the pinned
+UUDeview `uudecode`, and checks the decoded file against the payload's BLAKE3
+digest from the manifest. A seed that cannot be read back and decoded by an
+independent implementation is not a seed.
+
+Because the poster runs on the host rather than inside the upstream Docker
+network, it needs an address this machine can dial: `--uu-post-addr` defaults
+to `127.0.0.1:119`, which the shaper stack publishes and passes through to the
+same server Nyuu posts to. Posting is still setup and never a metric.
+
+`encoding` is recorded in the manifest and in every run artifact, and the
+summarizer treats it as a **label, not a key**: the lane is already its own
+fixture, so it is its own stratum by fixture id, and labelling the encoding on
+the comparison says why a client failed there without inventing a second
+dimension to pool across. A client that cannot decode uuencode goes DNF
+through ordinary output verification and is counted; `--exclude-client` stays
+for deterministic, already-understood failures and is not used to hide this
+one.
 
 ### Pinned 7-Zip writer
 
@@ -323,14 +619,64 @@ configuration gap rather than measure anything. The setting is NZBGet-specific
 and the SABnzbd and Weaver renders deliberately carry nothing equivalent, so
 the added key cannot shift what the other two clients do.
 
+### Pinned distribution writers
+
+`tar`, `gzip`, `xz`, `bzip2`, Info-ZIP `zip`/`unzip` and `cksfv` have no
+upstream release tarball that a benchmark could pin the way RARLAB and 7-Zip
+releases are pinned. They are distribution software, so they are pinned as
+distribution software: `docker/gnutools/` builds them from the same
+digest-pinned `debian:bookworm-slim` base the RARLAB and PAR2 images use, and
+`docker/gnutools/toolchain.json` records the exact package version of every
+one of them.
+
+The versions are not decoration. After the image is built the generator asks
+it for its installed versions and compares them against the toolchain file,
+failing closed and naming both versions if they differ, so a rebuilt base that
+quietly moved a package is a build error rather than an unnoticed change to
+what the fixtures contain. The whole toolchain — base image digest and every
+package version — is copied into each generated fixture's manifest as
+`archive_writer_toolchain`, so a fixture states which writer produced it in
+exactly the sense a RARLAB fixture does.
+
+```bash
+docker build -f docker/gnutools/Dockerfile \
+  --tag weaver-nntp-bench-gnutools:bookworm docker/gnutools
+```
+
+The entrypoint dispatches on its first argument (`tar`, `gzip`, `xz`, `bzip2`,
+`zip`, `unzip`, `cksfv`, `versions`), so one image covers every distribution
+writer the matrix uses and there is one place where their versions are stated.
+
+### Pinned uuencode oracle
+
+`docker/uudeview/` builds UUDeview 0.5.20 from the source tarball named in
+`docker/uudeview/toolchain.json`, verified against its SHA-256 before it is
+configured, and ships `uuenview` and `uudeview`. It is the independent
+implementation the uuencoded lane is proved against: the harness's own encoder
+writes the bytes, and UUDeview decodes them back off the server before the
+seed is accepted, so neither side is checking its own work. The toolchain is
+recorded in the fixture manifest like every other writer.
+
+```bash
+docker build -f docker/uudeview/Dockerfile \
+  --build-arg UUDEVIEW_URL=https://deb.debian.org/debian/pool/main/u/uudeview/uudeview_0.5.20.orig.tar.gz \
+  --build-arg UUDEVIEW_SHA256=a2a44fa543976775429bc65620bcca3c9b795dbfaec8183607a45f132270a414 \
+  --tag weaver-nntp-bench-uudeview:0.5.20 docker/uudeview
+```
+
+`fixturegen` and `nntpbench seed` build the images they need automatically.
+
 ## Step by step
 
 ### 1. Generate fixtures
 
-`fixturegen` builds and runs the pinned RARLAB / PAR2 / 7-Zip images itself
-(only the ones the selected fixtures need), and `--direct-mkv` uses the RARLAB
-image for its deterministic FFmpeg payload, so Docker is required for every
-invocation.
+`fixturegen` builds and runs the pinned RARLAB / PAR2 / 7-Zip / GNU-tools /
+UUDeview images itself (only the ones the selected fixtures need), and
+`--direct-mkv` uses the RARLAB image for its deterministic FFmpeg payload, so
+Docker is required for every invocation. `--gnutools-toolchain`,
+`--gnutools-dockerfile`, `--uudeview-toolchain` and `--uudeview-dockerfile`
+point at the pin files and build contexts, the same way the RARLAB, PAR2 and
+7-Zip flags do.
 
 ```bash
 go run ./cmd/fixturegen --list
@@ -341,6 +687,12 @@ go run ./cmd/fixturegen --fixture rar5-7-store-store-nonsolid-none-incompressibl
 # A 7z case, written by the pinned official 7-Zip build.
 go run ./cmd/fixturegen --fixture sevenzip-store-store-nonsolid-none-incompressible --output /scratch/fixtures
 
+# A tar.xz, an Info-ZIP spanned set and the uuencoded lane.
+go run ./cmd/fixturegen --output /scratch/fixtures \
+  --fixture tar-xz-xz-nonsolid-none-compressible \
+  --fixture zip-spanned-store-nonsolid-none-incompressible \
+  --fixture media-uuencode-store-nonsolid-none-incompressible
+
 # The disc topology at smoke scale.
 go run ./cmd/fixturegen --fixture rar5-7-bluray-store-nonsolid-none-incompressible \
   --bluray-large-file-bytes 256MiB \
@@ -348,15 +700,28 @@ go run ./cmd/fixturegen --fixture rar5-7-bluray-store-nonsolid-none-incompressib
   --bluray-small-file-count 64 --bluray-small-file-bytes 32KiB \
   --output /scratch/fixtures
 
+# The zip64 lanes. The large one holds a single 5 GiB member by default;
+# --zip64-large-file-bytes scales it, but below 4 GiB the writer stops
+# producing a zip64 archive and the generator refuses the lane rather than
+# posting an ordinary zip under a zip64 id.
+go run ./cmd/fixturegen --output /scratch/fixtures \
+  --fixture zip-zip64-forced-store-nonsolid-none-incompressible \
+  --fixture zip-streamed-store-nonsolid-none-incompressible
+go run ./cmd/fixturegen --fixture zip-zip64-large-store-nonsolid-none-incompressible \
+  --output /scratch/fixtures
+
 # The raw-download fixture the queue-transition benchmark uses.
 go run ./cmd/fixturegen --direct-mkv --output /scratch/fixtures
 ```
 
 Every fixture directory contains `archive/` — the exact bytes to post: archive
-volumes plus any PAR2 or `.rev` files, with deliberately missing volumes absent
-but their pre-damage digests kept — and `fixture-manifest.json` with the writer
-flags, the toolchain that rendered the payload, the toolchain that wrote the
-container, the repair profile, the posting order and its seed, any withheld
+volumes plus any PAR2, `.rev` or `.sfv` files, with deliberately missing
+volumes absent but their pre-damage digests kept — and `fixture-manifest.json`
+with the writer flags, the toolchain that rendered the payload, the toolchain
+that wrote the container, the compression method and the ratio it achieved, any
+inner container, any sidecar and the toolchain that verified it, what a zip
+was found to contain when it was parsed back, the post
+encoding, the repair profile, the posting order and its seed, any withheld
 volumes, BLAKE3 digests of the source and posted files, and the
 extracted-output oracle. The source payload is deleted once the writer's own
 reader has verified the archive; the manifest is enough to verify client
@@ -580,10 +945,23 @@ never crosses the shaper:
 ```bash
 go run ./cmd/nntpbench seed \
   --fixture-dir /scratch/fixtures/rar5-7-store-store-nonsolid-none-incompressible \
-  --run-id 2026-08-02-a \
+  --run-id 2026-08-02-a --article-size 750k \
   --network nntp-bench_nntp_upstream --nntp-host nntp-upstream \
   --username "${NNTP_BENCH_USERNAME:-fixture-user}" --password-file "$NNTP_BENCH_PASSWORD_FILE"
 ```
+
+`--article-size` declares the stratum the corpus is posted at (`750k` or
+`384k`, see [Article size](#article-size)) and sets Nyuu's article size;
+`--segment-bytes` still names the raw byte count directly and must agree with
+it. A whole corpus is seeded at one size; a session that measures both sizes
+seeds and caches two.
+
+The one uuencoded fixture takes the harness's own poster rather than Nyuu, and
+`seed` chooses by reading the fixture's manifest, so the command line is the
+same. That poster dials `--uu-post-addr` (default `127.0.0.1:119`) because it
+runs on the host rather than inside the upstream network, and it proves the
+post by reading it back and decoding it with the pinned UUDeview before
+reporting success. See [The uuencoded lane](#the-uuencoded-lane).
 
 The pinned Nyuu image is `linux/amd64` because its native `yencode` module
 does not build on arm64 Alpine; Docker emulates it on Apple Silicon. Posting is
@@ -599,6 +977,7 @@ Reposting an unchanged corpus every time is pure overhead. See
 go run ./cmd/nntpbench plan \
   --fixtures rar5-7-store-store-nonsolid-none-incompressible,rar4-store-store-nonsolid-none-incompressible \
   --archive-toolchains vanilla --profile equivalent-throughput --server-link 10gbit \
+  --article-size 750k \
   --repetitions 20 --seed 20260802 --output /scratch/runs/plan.json
 ```
 
@@ -643,7 +1022,11 @@ carries all three targets and each host runs only its own.
 `storage_profile` field. `--server-rtt` declares the fixed round trip the
 shaper adds (see [Fixed round trip](#fixed-round-trip)); it must match the
 `server-env` the shaper was started with, and the plan's `server_link`
-carries it as `rtt_micros`.
+carries it as `rtt_micros`. `--article-size` declares the stratum the corpus
+this plan measures was posted at; it defaults to `750k`, so a plan written
+before the stratum existed means what it always meant, and it must match the
+corpus the phase actually runs against (see
+[Article size](#article-size)).
 
 `--exclude-client client:fixture-id:reason` (repeatable) leaves one client out
 of one fixture's blocks, with the reason persisted in the plan under
@@ -782,13 +1165,19 @@ Only sequential artifacts that describe a client outcome are admitted:
 `passed` (verified output) and `completed_with_dnf` (the client reached a
 terminal failure, or its output failed neutral verification). Clients are
 paired inside the same randomized repetition block, stratified by fixture,
-profile, target, transport, archive toolchain, server link and storage
-profile. How each client validated TLS is a property of that client's run, not
+profile, target, transport, archive toolchain, server link, storage profile
+and article size. Article size joins the key for the same reason the link's
+round trip does: the same fixture at 768000 and at 393216 bytes per article is
+a different number of round trips and a different per-article cost, so the two
+are never pooled. How each client validated TLS is a property of that client's run, not
 of the block — SABnzbd's TLS runs are `tls-unverified` while the others are
 `tls-ca-verified` — so it is not part of the pairing key; the comparison
 carries each client's validation and label under `transport_policies`, and a
 client whose policy changes inside one stratum is refused as two products
-pooled. Each stratum reports how many blocks each client
+pooled. A fixture's post encoding is a label on the same footing: the
+uuencoded lane is already its own fixture and therefore its own stratum, so
+`encoding` is reported on the comparison to say what a client was up against
+rather than opening a dimension to pool across. Each stratum reports how many blocks each client
 finished, then, over the blocks both clients finished, the raw medians and
 coefficients of variation, the paired geometric-mean ratio and a deterministic
 10 000-resample bootstrap 95 % interval on the log ratio. There is no outlier
@@ -803,7 +1192,7 @@ withheld with a stated reason.
 
 Above the strata, `aggregates` pools the per-fixture comparisons by fixture
 class: one entry per class and non-fixture stratum (profile, target,
-transport, toolchain, server link, storage profile). Every fixture carries
+transport, toolchain, server link, storage profile, article size). Every fixture carries
 equal weight — its paired log ratios are averaged first and the fixture means
 second — so a fixture that ran more blocks does not count for more, and the
 bootstrap resamples blocks within each fixture with the fixture set held
@@ -872,7 +1261,10 @@ nntpbench chain --config runs/latency-series.json --only C3-rtt100
 `configs/chains/latency-series.example.json` is a complete session. Every
 relative path in a chain description resolves against the description's own
 directory, so a chain, its plans and its corpus move between machines as one
-unit.
+unit. It carries two phases for the additions above: `B3-breadth-rtt10`
+measures the container and compression lanes over the `breadth-formats`
+corpus, and `B3-384k-rtt10` repeats a phase at the smaller article size
+against a corpus seeded for it.
 
 A chain drives one of two server-side arrangements, named by `stack`. The
 default, `docker`, is the Compose topology above. `raw` runs the same server
@@ -881,8 +1273,14 @@ and shaper as local processes for the hosts that cannot have containers; see
 apart, so a description cannot ask for a Compose file on a raw stack or a
 container check on a stack that runs none.
 
-Each phase names its execution mode, its plan, its corpus and its artifact
-root, and declares the link conditions it must be measured under. The chain
+Each phase names its execution mode, its plan, its corpus, its artifact root
+and the `article_size` its corpus was seeded at, and declares the link
+conditions it must be measured under. The article size is declared rather than
+inferred, and it is checked: for every posted file the harness compares the
+article count the manifest implies at the declared size against the segment
+count in the seeded NZB, and a phase pointed at a corpus seeded for the other
+size fails by name before the shaper is touched. A phase that omits the field
+means `750k`, so an existing description keeps running unchanged. The chain
 reconfigures the shaper only when a phase's conditions differ from the phase
 before, and it restores a declared resting state when the session ends, so a
 finished session never leaves a rate limit or an injected round trip behind.
@@ -907,8 +1305,8 @@ Preconditions are checked once, before the first measurement:
   sets it directly, so there is no container to inspect);
 - the pinned client image reports the version the session is for;
 - every fixture each plan names has a manifest, posts at least the corpus
-  floor, and — for a phase that asks for a paired summary — declares a
-  headline or breadth class;
+  floor, declares the phase's article size in its seeded NZB, and — for a
+  phase that asks for a paired summary — declares a headline or breadth class;
 - no phase would measure into an artifact root that already holds suites.
 
 The last two are the expensive mistakes. An undersized fixture fails its suite
@@ -945,13 +1343,14 @@ start from it instead of reposting.
 A cache hit has to mean the server holds exactly the articles the fixtures on
 disk describe, so the image is keyed by a fingerprint over:
 
-- the format string `nntp-bench-seed-image-v1`, which is bumped whenever the
+- the format string `nntp-bench-seed-image-v2`, which is bumped whenever the
   input set or its framing changes;
 - every fixture's `fixture-manifest.json` (which already carries a BLAKE3
   digest of every posted byte, so this stays fast on a large corpus);
 - the seed parameters that decide what an article is called or how large it
-  is: the seed run id, the raw segment size, the newsgroup, and the poster's
-  message-id scheme;
+  is: the seed run id, the raw segment size (so a `750k` corpus is never a
+  cache hit for a `384k` phase), the newsgroup, and both posters' message-id
+  schemes — Nyuu's and the uuencode lane's;
 - the NNTP server image tag *and* its local image id, so a rebuilt server with
   the same tag is a miss rather than a silent hit.
 
@@ -964,7 +1363,7 @@ so a tag collision cannot be mistaken for a match.
 # After a normal `nntpbench seed` pass over the corpus, with the stack up:
 go run ./cmd/nntpbench seed-image status \
   --fixtures-root /scratch/fixtures --run-id seed-2026-09-04 \
-  --compose-project usenet-bench
+  --article-size 750k --compose-project usenet-bench
 
 go run ./cmd/nntpbench seed-image capture \
   --fixtures-root /scratch/fixtures --run-id seed-2026-09-04 \
@@ -1543,8 +1942,10 @@ In the primary mode all three clients are driven through their public local
 control API — Weaver's GraphQL service, SABnzbd `addfile`, NZBGet JSON-RPC
 `append` — and each client image is `image@sha256:<digest>`. The fixture
 password is passed only for fixtures whose manifest says encryption requires
-it; no client gets a fixture-specific fast path. The container log is kept in
-the run's config directory.
+it; no client gets a fixture-specific fast path, and that holds for the
+container formats too — a client that has no reader configured for a `.tar.xz`
+or a zip is a recorded DNF, not a lane the harness unpacks on its behalf. The
+container log is kept in the run's config directory.
 
 Per run the artifact records:
 
@@ -1597,6 +1998,13 @@ Per run the artifact records:
   stratum, not an annotation: `local` and `nfs-*` results are never pooled, and
   an NFS artifact without a valid `storage_attestation` is refused by the
   summarizer.
+- `article_profile` — the article-size stratum the corpus was posted at, with
+  its id and its decoded bytes per article. It is a stratum, not an
+  annotation: `750k` and `384k` results are never pooled, and the size a plan
+  declares is checked against the seeded NZB before a phase runs.
+- `encoding` — how the fixture's bodies were encoded, `yenc` or `uuencode`.
+  This one is a label on the comparison rather than a pairing key, because the
+  uuencoded fixture is already its own stratum by fixture id.
 - `server_link` — the NNTP link the client downloaded over: the aggregate
   egress rate and burst, and the fixed round trip (`rtt_micros`) the shaper
   added. The round trip is part of the stratum: a 1 Gbit result at 0 and at
@@ -1633,7 +2041,11 @@ digest-pinned catalog shape.
 
 ## What this does not claim
 
-- That any fixture mix is the statistical distribution of Usenet.
+- That any fixture mix is the statistical distribution of Usenet. That covers
+  the container formats and the two article sizes as well: `384k` is in the
+  matrix because it is a real and still-common size, not because some share of
+  posts are at it, and a tar or zip lane is there because clients meet those
+  shapes, not because they are common.
 - That cross-posted groups are independent observations.
 - That Docker / Linux, native macOS and native Windows telemetry can be pooled
   into one CPU or instruction ranking — target and collector scope stay
@@ -1644,5 +2056,16 @@ digest-pinned catalog shape.
   do not belong in one comparison.
 - Any client result without its fixture manifest, client version or image
   digest, effective configuration, plan and output-hash record.
+- That a client which does not finish a breadth format lacks the ability in
+  general. It means the pinned image, as configured from the shared baseline,
+  did not produce the expected output — NZBGet has an `UnrarCmd` and a
+  `SevenZipCmd` and nothing for tar, xz or zip, so those lanes are expected to
+  DNF for it. The result records what happened; it is not a statement about
+  what the product could do with a different configuration.
+- That the zip64 and streamed lanes say anything about in-stream zip handling.
+  Weaver extracts zip after the download completes, so those fixtures measure
+  the download and a post-download extraction, and a client's zip64 or
+  data-descriptor support is read from whether the expected payload appeared,
+  never assumed from its version.
 - That the client matrix is exhaustive; clients outside the catalog are simply
   not measured.

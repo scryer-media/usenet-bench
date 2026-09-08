@@ -122,7 +122,7 @@ func runSingle(ctx context.Context, cfg Config) (nativeRun, error) {
 		return nativeRun{}, err
 	}
 	result := benchmark.AdapterResult{
-		SchemaVersion:            6,
+		SchemaVersion:            7,
 		RunID:                    cfg.RunID,
 		Client:                   cfg.Client,
 		ArchiveToolchain:         cfg.ArchiveToolchain,
@@ -132,6 +132,7 @@ func runSingle(ctx context.Context, cfg Config) (nativeRun, error) {
 		TLSValidation:            cfg.TLSValidation,
 		TransportLabel:           cfg.TransportLabel,
 		ServerLink:               cfg.ServerLink,
+		ArticleProfile:           cfg.ArticleProfile,
 		StorageProfile:           cfg.StorageProfile,
 		QueuedAt:                 queueTiming.AcceptedAt,
 		CompletionAt:             completion.ObservedAt,
@@ -152,6 +153,7 @@ func runSingle(ctx context.Context, cfg Config) (nativeRun, error) {
 		TLSValidation:    cfg.TLSValidation,
 		TransportLabel:   cfg.TransportLabel,
 		ServerLink:       cfg.ServerLink,
+		ArticleProfile:   cfg.ArticleProfile,
 		StorageProfile:   cfg.StorageProfile,
 	}); err != nil {
 		return nativeRun{}, fmt.Errorf("validate adapter result: %w", err)
@@ -214,7 +216,7 @@ func runSequentialQueue(ctx context.Context, cfg Config) error {
 		jobs = append(jobs, job)
 	}
 	result := benchmark.QueueAdapterResult{
-		SchemaVersion:            6,
+		SchemaVersion:            7,
 		SuiteID:                  input.SuiteID,
 		SubmissionMode:           input.SubmissionMode,
 		Client:                   cfg.Client,
@@ -225,6 +227,7 @@ func runSequentialQueue(ctx context.Context, cfg Config) error {
 		TLSValidation:            cfg.TLSValidation,
 		TransportLabel:           cfg.TransportLabel,
 		ServerLink:               cfg.ServerLink,
+		ArticleProfile:           cfg.ArticleProfile,
 		StorageProfile:           cfg.StorageProfile,
 		QueueStartedAt:           queueStartedAt,
 		QueueCompletedAt:         queueCompletedAt,

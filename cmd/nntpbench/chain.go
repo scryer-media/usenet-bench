@@ -23,6 +23,7 @@ import (
 
 	"github.com/scryer-media/usenet-bench/internal/benchmark"
 	"github.com/scryer-media/usenet-bench/internal/fixture"
+	"github.com/scryer-media/usenet-bench/internal/nntp"
 	"github.com/scryer-media/usenet-bench/internal/rawstack"
 )
 
@@ -194,6 +195,14 @@ type ChainPhase struct {
 	ServerEgressBPS  uint64 `json:"server_egress_bps,omitempty"`
 	ServerBurstBytes uint64 `json:"server_burst_bytes,omitempty"`
 
+	// ArticleSize is the article-size stratum this phase's corpus was seeded
+	// at, named rather than measured in bytes. It is a property of the seed
+	// image the phase runs against, not of the client, so a phase that names
+	// one size while pointing at a corpus seeded at another is refused in the
+	// preconditions — before any measurement — by reading the seeded NZBs.
+	// Empty means the corpus default, 750k.
+	ArticleSize string `json:"article_size,omitempty"`
+
 	// NFS carries the shaped-storage wiring a storage phase needs.
 	NFS *ChainNFS `json:"nfs,omitempty"`
 
@@ -255,19 +264,32 @@ type ChainNFS struct {
 
 // ChainPhaseResult records what a phase did, in a form that outlives the run.
 type ChainPhaseResult struct {
-	Name       string    `json:"name"`
-	Mode       string    `json:"mode"`
-	ServerLink string    `json:"server_link"`
-	ServerRTT  string    `json:"server_rtt"`
-	StartedAt  time.Time `json:"started_at"`
-	EndedAt    time.Time `json:"ended_at"`
-	ExitCode   int       `json:"exit_code"`
-	Verdict    string    `json:"verdict"`
-	Suites     int       `json:"suites"`
-	Artifacts  string    `json:"artifacts"`
-	LogPath    string    `json:"log_path"`
-	Summaries  []string  `json:"summaries,omitempty"`
-	Error      string    `json:"error,omitempty"`
+	Name       string `json:"name"`
+	Mode       string `json:"mode"`
+	ServerLink string `json:"server_link"`
+	ServerRTT  string `json:"server_rtt"`
+	// ArticleSize is the article-size stratum the phase ran at, recorded so a
+	// session's own log says which stratum each phase belongs to without
+	// reopening its plan.
+	ArticleSize string    `json:"article_size"`
+	StartedAt   time.Time `json:"started_at"`
+	EndedAt     time.Time `json:"ended_at"`
+	ExitCode    int       `json:"exit_code"`
+	Verdict     string    `json:"verdict"`
+	Suites      int       `json:"suites"`
+	Artifacts   string    `json:"artifacts"`
+	LogPath     string    `json:"log_path"`
+	Summaries   []string  `json:"summaries,omitempty"`
+	Error       string    `json:"error,omitempty"`
+}
+
+// chainArticleSizeLabel names the stratum a phase ran at, spelling out the
+// default rather than leaving the record blank.
+func chainArticleSizeLabel(articleSize string) string {
+	if strings.TrimSpace(articleSize) == "" {
+		return benchmark.Article750K
+	}
+	return articleSize
 }
 
 // ChainResult is the machine-readable record of a whole session.
@@ -619,6 +641,9 @@ func validateChainConfig(config ChainConfig) error {
 			return fmt.Errorf("phase %s: mode %q is not one of sequential, queue, queue-transition", phase.Name, phase.Mode)
 		}
 		if _, err := phase.linkProfile(); err != nil {
+			return fmt.Errorf("phase %s: %w", phase.Name, err)
+		}
+		if _, err := benchmark.ResolveArticleProfile(phase.ArticleSize); err != nil {
 			return fmt.Errorf("phase %s: %w", phase.Name, err)
 		}
 		if phase.NFS != nil && phase.NFS.Container == "" {
@@ -1083,7 +1108,8 @@ func runChainPhase(config ChainConfig, phase ChainPhase, log func(string, ...any
 	result := ChainPhaseResult{
 		Name: phase.Name, Mode: phase.Mode,
 		ServerLink: phase.ServerLink, ServerRTT: chainRTTLabel(phase.ServerRTT),
-		Artifacts: phase.Artifacts, StartedAt: time.Now().UTC(),
+		ArticleSize: chainArticleSizeLabel(phase.ArticleSize),
+		Artifacts:   phase.Artifacts, StartedAt: time.Now().UTC(),
 	}
 	// A raw session starts no containers, so there are none to clean up and
 	// nothing to ask a Docker daemon that may not be installed at all.
@@ -1516,6 +1542,10 @@ func buildChainPlan(phase ChainPhase, target string) (benchmark.Plan, error) {
 	if err != nil {
 		return benchmark.Plan{}, err
 	}
+	article, err := benchmark.ResolveArticleProfile(phase.ArticleSize)
+	if err != nil {
+		return benchmark.Plan{}, fmt.Errorf("phase %s: %w", phase.Name, err)
+	}
 	storageID := spec.StorageProfile
 	if storageID == "" {
 		storageID = benchmark.StorageProfileLocal
@@ -1544,6 +1574,7 @@ func buildChainPlan(phase ChainPhase, target string) (benchmark.Plan, error) {
 		Profile:           spec.Profile,
 		ServerLink:        link,
 		StorageProfile:    storage,
+		ArticleProfile:    article,
 		Repetitions:       spec.Repetitions,
 		Seed:              spec.Seed,
 		ClientExclusions:  exclusions,
@@ -1572,7 +1603,12 @@ func checkChainPhaseFixtures(phases []ChainPhase, built map[string]benchmark.Pla
 			}
 			plan = loaded
 		}
-		var missing, undersized, unclassified []string
+		// The plan records the article size the phase declared, and the seeded
+		// NZBs record the size the corpus was actually posted at. A phase that
+		// points at a seed image built for the other stratum is caught here
+		// rather than producing a full set of results filed under a size they
+		// were not measured at.
+		var missing, undersized, unclassified, mismatchedArticles []string
 		for _, id := range plan.FixtureIDs {
 			manifest, err := fixture.LoadGeneratedManifest(
 				filepath.Join(phase.FixturesRoot, id, "fixture-manifest.json"))
@@ -1583,6 +1619,12 @@ func checkChainPhaseFixtures(phases []ChainPhase, built map[string]benchmark.Pla
 			if err := manifest.ValidatePostedSize(); err != nil {
 				undersized = append(undersized,
 					fmt.Sprintf("%s (%.1f MiB)", id, float64(manifest.PostedBytes())/(1<<20)))
+			}
+			nzbPath := filepath.Join(phase.FixturesRoot, id, id+".nzb")
+			if _, statErr := os.Stat(nzbPath); statErr == nil {
+				if err := nntp.AssertNZBArticleSize(nzbPath, manifest, plan.ArticleProfile.RawBytes); err != nil {
+					mismatchedArticles = append(mismatchedArticles, err.Error())
+				}
 			}
 			// A summary aggregates by fixture class, so a paired summary of
 			// unclassified fixtures is empty however well the run went. A
@@ -1599,6 +1641,7 @@ func checkChainPhaseFixtures(phases []ChainPhase, built map[string]benchmark.Pla
 			{undersized, fmt.Sprintf("post less than the %d MiB floor and would fail their suites",
 				fixture.MinimumPostedBytes>>20)},
 			{unclassified, "declare no headline or breadth class, so this phase would summarize to nothing"},
+			{mismatchedArticles, fmt.Sprintf("were seeded at a different article size than this phase's %s stratum", plan.ArticleProfile)},
 		} {
 			if len(problem.fixtures) == 0 {
 				continue
@@ -1608,7 +1651,7 @@ func checkChainPhaseFixtures(phases []ChainPhase, built map[string]benchmark.Pla
 				phase.Name, len(problem.fixtures), len(plan.FixtureIDs), problem.message,
 				strings.Join(problem.fixtures, "\n  "))
 		}
-		log("precondition ok: phase %s names %d usable fixtures", phase.Name, len(plan.FixtureIDs))
+		log("precondition ok: phase %s names %d usable fixtures at %s articles", phase.Name, len(plan.FixtureIDs), plan.ArticleProfile)
 	}
 	return nil
 }

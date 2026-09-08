@@ -277,8 +277,8 @@ func TestBuildSummaryReportPairsContainerCPUTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.SchemaVersion != 6 {
-		t.Fatalf("schema version %d, want 6", report.SchemaVersion)
+	if report.SchemaVersion != 7 {
+		t.Fatalf("schema version %d, want 7", report.SchemaVersion)
 	}
 	cpu := report.Comparisons[0].CPUTime
 	if cpu.Metric != "cpu_time_nanoseconds" || cpu.ComparisonWithheld != "" || cpu.Summary == nil {
@@ -424,6 +424,7 @@ func summaryTestFixtureArtifact(fixtureID string, class fixture.FixtureClass, cl
 		Profile:          benchmark.ProfileStock,
 		ServerLink:       benchmark.DefaultServerLinkProfile(),
 		StorageProfile:   benchmark.DefaultStorageProfile(),
+		ArticleProfile:   benchmark.DefaultArticleProfile(),
 		Repetition:       repetition,
 	}
 	adapterJob := benchmark.QueueJobResult{
@@ -432,13 +433,13 @@ func summaryTestFixtureArtifact(fixtureID string, class fixture.FixtureClass, cl
 		TerminalObservationUncertainty:  measurement / 200,
 	}
 	return benchmark.QueueArtifact{
-		SchemaVersion:  7,
+		SchemaVersion:  8,
 		SuiteID:        run.ID,
 		SubmissionMode: benchmark.SubmissionModeSequential,
 		Runs:           []benchmark.Run{run},
 		Status:         "passed",
 		AdapterResult: &benchmark.QueueAdapterResult{
-			SchemaVersion:            6,
+			SchemaVersion:            7,
 			SuiteID:                  run.ID,
 			SubmissionMode:           benchmark.SubmissionModeSequential,
 			Client:                   run.Client,
@@ -450,6 +451,7 @@ func summaryTestFixtureArtifact(fixtureID string, class fixture.FixtureClass, cl
 			TransportLabel:           run.TransportLabel,
 			ServerLink:               run.ServerLink,
 			StorageProfile:           run.StorageProfile,
+			ArticleProfile:           run.ArticleProfile,
 			Jobs:                     []benchmark.QueueJobResult{adapterJob},
 			ClientIdentity:           "sha256:test-" + string(run.Client),
 			ClientVersion:            "test",

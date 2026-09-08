@@ -38,6 +38,7 @@
         "sabnzbd",
         "nzbget"
       ],
+      "article_size": "750k",
       "plan_spec": {
         "fixture_set": "native-breadth",
         "transports": [
@@ -60,6 +61,7 @@
         "sabnzbd",
         "nzbget"
       ],
+      "article_size": "750k",
       "plan_spec": {
         "fixture_set": "native-breadth",
         "transports": [

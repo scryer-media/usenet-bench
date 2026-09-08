@@ -28,14 +28,15 @@ func writeCorpusOnDisk(t *testing.T, fixtures map[string]string) string {
 
 func testCorpus(root string, ids ...string) Corpus {
 	return Corpus{
-		FixturesRoot:      root,
-		FixtureIDs:        ids,
-		RunID:             "seed-run-1",
-		SegmentBytes:      750 << 10,
-		Group:             "alt.binaries.test",
-		MessageIDTemplate: "bench-seed-run-1-{fixture}-{0filenum}-{0part}@nntp-bench",
-		BaseImage:         "e2e-nntp:local",
-		BaseImageID:       "sha256:base",
+		FixturesRoot:        root,
+		FixtureIDs:          ids,
+		RunID:               "seed-run-1",
+		SegmentBytes:        750 << 10,
+		Group:               "alt.binaries.test",
+		MessageIDTemplate:   "bench-seed-run-1-{fixture}-{0filenum}-{0part}@nntp-bench",
+		UUMessageIDTemplate: "bench-seed-run-1-{fixture}-uu-{0filenum}-{0part}@nntp-bench",
+		BaseImage:           "e2e-nntp:local",
+		BaseImageID:         "sha256:base",
 	}
 }
 

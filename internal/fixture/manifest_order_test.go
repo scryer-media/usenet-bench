@@ -23,6 +23,7 @@ func TestLoadGeneratedManifestV6RoundTripsPostingOrderAndWithheldFiles(t *testin
 			"archive/fixture.part01.rar",
 		},
 		NZBOrderSeed: 42,
+		Encoding:     YEncEncoding,
 		Repair: RepairDetails{
 			Profile:               PAR2HeavyWithheldProfile,
 			PAR2RedundancyPercent: 35,

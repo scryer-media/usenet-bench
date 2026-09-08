@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/scryer-media/usenet-bench/internal/benchmark"
 	"github.com/scryer-media/usenet-bench/internal/fixture"
 	"github.com/scryer-media/usenet-bench/internal/nntp"
 	"github.com/scryer-media/usenet-bench/internal/seedimage"
@@ -41,6 +42,7 @@ type seedImageFlags struct {
 	options      seedimage.Options
 	corpusPath   string
 	fixturesCSV  string
+	articleSize  string
 	provenance   string
 	dockerBinary string
 }
@@ -50,7 +52,8 @@ func registerSeedImageFlags(flags *flag.FlagSet, shared *seedImageFlags) {
 	flags.StringVar(&shared.corpusPath, "corpus", "fixtures/corpus.json", "declared corpus JSON used when --fixtures is omitted")
 	flags.StringVar(&shared.fixturesCSV, "fixtures", "", "comma-separated fixture ids to cache")
 	flags.StringVar(&shared.options.Corpus.RunID, "run-id", "", "seed run identifier used when the corpus was posted")
-	flags.IntVar(&shared.options.Corpus.SegmentBytes, "segment-bytes", 750<<10, "raw bytes per yEnc article used when the corpus was posted")
+	flags.StringVar(&shared.articleSize, "article-size", benchmark.Article750K, "article-size stratum the corpus was posted at: "+strings.Join(benchmark.ArticleProfileIDs(), ", "))
+	flags.IntVar(&shared.options.Corpus.SegmentBytes, "segment-bytes", 0, "raw bytes per article used when the corpus was posted; 0 takes the size from --article-size")
 	flags.StringVar(&shared.options.Corpus.Group, "group", "alt.binaries.test", "newsgroup the corpus was posted to")
 	flags.StringVar(&shared.options.Corpus.BaseImage, "nntp-image", "e2e-nntp:local", "NNTP server image the articles are baked into")
 	flags.StringVar(&shared.options.Corpus.BaseImageID, "nntp-image-id", "", "override the resolved NNTP server image id")
@@ -64,6 +67,20 @@ func registerSeedImageFlags(flags *flag.FlagSet, shared *seedImageFlags) {
 
 func (shared *seedImageFlags) resolve() (seedimage.Options, error) {
 	options := shared.options
+	// The article size is part of what a cached image contains, not a
+	// property of the machine restoring it: an image seeded at 384 KiB and one
+	// seeded at 750 KiB hold different articles under different message ids,
+	// and the fingerprint already covers the byte count. Naming the stratum
+	// here keeps the two spellings from drifting apart.
+	article, err := benchmark.ResolveArticleProfile(shared.articleSize)
+	if err != nil {
+		return seedimage.Options{}, err
+	}
+	if options.Corpus.SegmentBytes == 0 {
+		options.Corpus.SegmentBytes = article.RawBytes
+	} else if options.Corpus.SegmentBytes != article.RawBytes {
+		return seedimage.Options{}, fmt.Errorf("--segment-bytes %d does not match --article-size %s (%d bytes)", options.Corpus.SegmentBytes, article.ID, article.RawBytes)
+	}
 	options.Docker = seedimage.CLI{Binary: shared.dockerBinary}
 	// The message-id scheme is part of every article's identity, so it is a
 	// fingerprint input rather than a flag: a harness change that alters it
@@ -78,9 +95,15 @@ func (shared *seedImageFlags) resolve() (seedimage.Options, error) {
 		"{fixture}",
 		1,
 	)
-	ids, err := resolveSeedImageFixtures(shared.fixturesCSV, shared.corpusPath)
-	if err != nil {
-		return seedimage.Options{}, err
+	options.Corpus.UUMessageIDTemplate = strings.Replace(
+		nntp.UUMessageIDTemplate(options.Corpus.RunID, seedImageFixturePlaceholder),
+		seedImageFixturePlaceholder,
+		"{fixture}",
+		1,
+	)
+	ids, err2 := resolveSeedImageFixtures(shared.fixturesCSV, shared.corpusPath)
+	if err2 != nil {
+		return seedimage.Options{}, err2
 	}
 	options.Corpus.FixtureIDs = ids
 	return options, nil

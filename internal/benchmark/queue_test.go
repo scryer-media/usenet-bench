@@ -235,7 +235,7 @@ func TestSequentialQueueResultLeavesOutputForNeutralVerification(t *testing.T) {
 		InstructionsRetired: UnavailableMeasurement("client_container", "test", "1", "not collected"),
 	}
 	result := QueueAdapterResult{
-		SchemaVersion:            6,
+		SchemaVersion:            7,
 		SuiteID:                  suite.ID,
 		SubmissionMode:           SubmissionModeSequential,
 		Client:                   run.Client,
@@ -247,6 +247,7 @@ func TestSequentialQueueResultLeavesOutputForNeutralVerification(t *testing.T) {
 		TransportLabel:           run.TransportLabel,
 		ServerLink:               run.ServerLink,
 		StorageProfile:           run.StorageProfile,
+		ArticleProfile:           run.ArticleProfile,
 		QueueStartedAt:           queuedAt,
 		QueueCompletedAt:         completedAt,
 		StatusPollIntervalNanos:  time.Millisecond.Nanoseconds(),

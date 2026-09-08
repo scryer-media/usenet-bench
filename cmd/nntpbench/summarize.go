@@ -45,6 +45,8 @@ type aggregateStratum struct {
 	StorageNFSLinkID string                     `json:"storage_nfs_link_id"`
 	StorageLinkBPS   uint64                     `json:"storage_link_bits_per_second"`
 	StorageRTTMicros uint64                     `json:"storage_rtt_micros"`
+	ArticleProfileID string                     `json:"article_profile_id"`
+	ArticleRawBytes  int                        `json:"article_raw_bytes"`
 }
 
 func (s comparisonStratum) aggregateKey(class fixture.FixtureClass) aggregateStratum {
@@ -62,6 +64,8 @@ func (s comparisonStratum) aggregateKey(class fixture.FixtureClass) aggregateStr
 		StorageNFSLinkID: s.StorageNFSLinkID,
 		StorageLinkBPS:   s.StorageLinkBPS,
 		StorageRTTMicros: s.StorageRTTMicros,
+		ArticleProfileID: s.ArticleProfileID,
+		ArticleRawBytes:  s.ArticleRawBytes,
 	}
 }
 
@@ -107,6 +111,13 @@ type comparisonStratum struct {
 	StorageNFSLinkID string `json:"storage_nfs_link_id"`
 	StorageLinkBPS   uint64 `json:"storage_link_bits_per_second"`
 	StorageRTTMicros uint64 `json:"storage_rtt_micros"`
+	// ArticleProfileID and its byte count join the stratum key. The same
+	// fixture downloaded at 384 KiB and at 750 KiB articles is the same bytes
+	// split into a different number of round trips and a different amount of
+	// per-article work, so the two are never pooled — the same rule that keeps
+	// two server RTTs apart.
+	ArticleProfileID string `json:"article_profile_id"`
+	ArticleRawBytes  int    `json:"article_raw_bytes"`
 }
 
 type stratifiedComparison struct {
@@ -114,6 +125,11 @@ type stratifiedComparison struct {
 	// FixtureClass is the class the fixture's manifest declared, and the key
 	// under which this comparison is pooled in Aggregates.
 	FixtureClass fixture.FixtureClass `json:"fixture_class"`
+	// Encoding is how this fixture's articles were encoded: yenc for every
+	// fixture but the uuencode lane. It is reported, not keyed on, because a
+	// fixture has exactly one encoding — but a did-not-finish is much easier
+	// to read with it in view.
+	Encoding fixture.PostEncoding `json:"encoding"`
 	// TransportPolicies records, per observed client, how it validated TLS in
 	// this stratum. Plaintext strata carry not_applicable. A client the plan
 	// excluded on this fixture has no observation and so no entry here; its
@@ -561,20 +577,21 @@ func buildSummaryReport(artifacts []benchmark.QueueArtifact, exclusions []benchm
 	cpuCaveats := make(map[comparisonStratum]map[string]bool)
 	transfers := make(map[summaryProductKey]*transferAccount)
 	classes := make(map[string]fixture.FixtureClass)
+	encodings := make(map[string]fixture.PostEncoding)
 	// One summary describes one storage stratum. Local and NFS runs answer
 	// different questions, so a directory holding both is an operator mistake
 	// and is refused rather than silently split into two comparisons that look
 	// like one report.
 	var storageProfile *benchmark.StorageProfile
 	for _, artifact := range artifacts {
-		if artifact.SchemaVersion != 7 {
-			return summaryReport{}, fmt.Errorf("summary input %s uses queue artifact schema %d, want 7", artifact.SuiteID, artifact.SchemaVersion)
+		if artifact.SchemaVersion != 8 {
+			return summaryReport{}, fmt.Errorf("summary input %s uses queue artifact schema %d, want 8", artifact.SuiteID, artifact.SchemaVersion)
 		}
 		if !summarizableSequentialStatus(artifact.Status) || artifact.SubmissionMode != benchmark.SubmissionModeSequential {
 			return summaryReport{}, fmt.Errorf("summary input contains a non-passed sequential artifact %s", artifact.SuiteID)
 		}
-		if artifact.AdapterResult == nil || artifact.AdapterResult.SchemaVersion != 6 {
-			return summaryReport{}, fmt.Errorf("sequential artifact %s lacks queue adapter result schema 6", artifact.SuiteID)
+		if artifact.AdapterResult == nil || artifact.AdapterResult.SchemaVersion != 7 {
+			return summaryReport{}, fmt.Errorf("sequential artifact %s lacks queue adapter result schema 7", artifact.SuiteID)
 		}
 		if len(artifact.Jobs) != 1 {
 			return summaryReport{}, fmt.Errorf("sequential artifact %s contains %d jobs, want exactly one", artifact.SuiteID, len(artifact.Jobs))
@@ -583,7 +600,7 @@ func buildSummaryReport(artifacts []benchmark.QueueArtifact, exclusions []benchm
 		if len(artifact.Runs) != 1 || artifact.Runs[0].ID != job.Run.ID || artifact.AdapterResult.SuiteID != artifact.SuiteID || len(artifact.AdapterResult.Jobs) != 1 || artifact.AdapterResult.Jobs[0].RunID != job.Run.ID || !reflect.DeepEqual(artifact.AdapterResult.Jobs[0], job.AdapterResult) {
 			return summaryReport{}, fmt.Errorf("sequential artifact %s has inconsistent run or adapter-result identity", artifact.SuiteID)
 		}
-		if artifact.AdapterResult.Client != job.Run.Client || artifact.AdapterResult.ArchiveToolchain != job.Run.ArchiveToolchain || artifact.AdapterResult.ExecutionTarget != job.Run.ExecutionTarget || artifact.AdapterResult.Transport != job.Run.Transport || artifact.AdapterResult.TLSValidation != job.Run.TLSValidation || artifact.AdapterResult.TransportLabel != job.Run.TransportLabel || artifact.AdapterResult.ServerLink != job.Run.ServerLink || artifact.AdapterResult.StorageProfile != job.Run.StorageProfile {
+		if artifact.AdapterResult.Client != job.Run.Client || artifact.AdapterResult.ArchiveToolchain != job.Run.ArchiveToolchain || artifact.AdapterResult.ExecutionTarget != job.Run.ExecutionTarget || artifact.AdapterResult.Transport != job.Run.Transport || artifact.AdapterResult.TLSValidation != job.Run.TLSValidation || artifact.AdapterResult.TransportLabel != job.Run.TransportLabel || artifact.AdapterResult.ServerLink != job.Run.ServerLink || artifact.AdapterResult.StorageProfile != job.Run.StorageProfile || artifact.AdapterResult.ArticleProfile != job.Run.ArticleProfile {
 			return summaryReport{}, fmt.Errorf("sequential artifact %s has adapter metadata inconsistent with its planned run", artifact.SuiteID)
 		}
 		if err := validateSummaryShaperEvidence(artifact, job.Run.ServerLink); err != nil {
@@ -629,6 +646,8 @@ func buildSummaryReport(artifacts []benchmark.QueueArtifact, exclusions []benchm
 			StorageNFSLinkID: job.Run.StorageProfile.NFSLinkID,
 			StorageLinkBPS:   job.Run.StorageProfile.LinkBitsPerSecond,
 			StorageRTTMicros: job.Run.StorageProfile.RTTMicros,
+			ArticleProfileID: job.Run.ArticleProfile.ID,
+			ArticleRawBytes:  job.Run.ArticleProfile.RawBytes,
 		}
 		if len(artifact.AdapterResult.RenderedConfigSHA256) != 64 {
 			return summaryReport{}, fmt.Errorf("sequential artifact %s lacks a rendered-config SHA-256", artifact.SuiteID)
@@ -643,6 +662,18 @@ func buildSummaryReport(artifacts []benchmark.QueueArtifact, exclusions []benchm
 			return summaryReport{}, fmt.Errorf("fixture %s is recorded as both %q and %q across artifacts", job.Run.FixtureID, previous, job.FixtureClass)
 		}
 		classes[job.Run.FixtureID] = job.FixtureClass
+		// Encoding is a label, not a key: a uuencoded fixture is its own
+		// fixture and so already has its own stratum. Carrying it here is what
+		// lets a reader see "this client did not finish, and the post was
+		// uuencoded" without going back to the corpus.
+		encoding := job.Encoding
+		if encoding == "" {
+			encoding = fixture.YEncEncoding
+		}
+		if previous, ok := encodings[job.Run.FixtureID]; ok && previous != encoding {
+			return summaryReport{}, fmt.Errorf("fixture %s is recorded as both %q and %q encoded across artifacts", job.Run.FixtureID, previous, encoding)
+		}
+		encodings[job.Run.FixtureID] = encoding
 		productKey := summaryProductKey{Stratum: stratum, Client: job.Run.Client}
 		identity := summaryProductIdentity{
 			ClientIdentity:           artifact.AdapterResult.ClientIdentity,
@@ -741,7 +772,7 @@ func buildSummaryReport(artifacts []benchmark.QueueArtifact, exclusions []benchm
 	}
 	sort.Slice(strata, func(left, right int) bool { return fmt.Sprint(strata[left]) < fmt.Sprint(strata[right]) })
 	report := summaryReport{
-		SchemaVersion: 6,
+		SchemaVersion: 7,
 		Metric:        benchmark.PrimaryMetric,
 		Baseline:      baseline,
 		Candidate:     candidate,
@@ -797,7 +828,7 @@ func buildSummaryReport(artifacts []benchmark.QueueArtifact, exclusions []benchm
 			samples = append(samples, benchmark.PairedSample{Baseline: *block.baseline, Candidate: *block.candidate})
 		}
 		completion.PairedBlocks = len(samples)
-		comparison := stratifiedComparison{Stratum: stratum, FixtureClass: class, Completion: completion}
+		comparison := stratifiedComparison{Stratum: stratum, FixtureClass: class, Encoding: encodings[stratum.FixtureID], Completion: completion}
 		for _, client := range []benchmark.Client{baseline, candidate} {
 			if identity, ok := identities[summaryProductKey{Stratum: stratum, Client: client}]; ok {
 				comparison.TransportPolicies = append(comparison.TransportPolicies, clientTransportPolicy{Client: client, TLSValidation: identity.TLSValidation, TransportLabel: identity.TransportLabel})

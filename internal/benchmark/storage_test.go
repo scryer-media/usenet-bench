@@ -126,8 +126,8 @@ func TestPlanCarriesStorageProfileIntoEveryRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.SchemaVersion != 6 {
-		t.Fatalf("plan schema should be 6, got %d", plan.SchemaVersion)
+	if plan.SchemaVersion != 7 {
+		t.Fatalf("plan schema should be 7, got %d", plan.SchemaVersion)
 	}
 	if plan.StorageProfile != profile {
 		t.Fatalf("plan should carry the resolved storage profile, got %#v", plan.StorageProfile)

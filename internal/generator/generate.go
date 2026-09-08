@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/scryer-media/usenet-bench/internal/fixture"
+	"github.com/scryer-media/usenet-bench/internal/uucodec"
 	"github.com/zeebo/blake3"
 )
 
@@ -44,6 +45,13 @@ const (
 	defaultBluRaySmallFile          int64 = 128 << 10
 	defaultBluRaySmallFileCount           = 512
 	defaultGenerationWorkers              = 4
+
+	// The zip64 large lane exists to put one member past the 32-bit size
+	// fields, so its default has to clear 4 GiB with room to spare. It has its
+	// own knob rather than sharing the Blu-ray one because a smoke run wants
+	// to shrink the Blu-ray disc without silently turning the zip64 lane into
+	// an ordinary zip — which the structure check would then refuse.
+	defaultZip64LargeFile int64 = 5 << 30
 )
 
 var canonicalFileTime = time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
@@ -56,12 +64,17 @@ type Config struct {
 	PAR2DockerfilePath       string
 	SevenZipToolchainPath    string
 	SevenZipDockerfilePath   string
+	GNUToolsToolchainPath    string
+	GNUToolsDockerfilePath   string
+	UUToolchainPath          string
+	UUDockerfilePath         string
 	OutputDir                string
 	DockerBinary             string
 	BytesPerFile             int64
 	MultiVolumeBytesPerFile  int64
 	CompressibleBytesPerFile int64
 	BluRayLargeFileBytes     int64
+	Zip64LargeFileBytes      int64
 	BluRayMediumFileBytes    int64
 	BluRayMediumFileCount    int
 	BluRaySmallFileBytes     int64
@@ -93,6 +106,18 @@ func (c Config) withDefaults() Config {
 	if c.SevenZipDockerfilePath == "" {
 		c.SevenZipDockerfilePath = "docker/sevenzip/Dockerfile"
 	}
+	if c.GNUToolsToolchainPath == "" {
+		c.GNUToolsToolchainPath = "docker/gnutools/toolchain.json"
+	}
+	if c.GNUToolsDockerfilePath == "" {
+		c.GNUToolsDockerfilePath = "docker/gnutools/Dockerfile"
+	}
+	if c.UUToolchainPath == "" {
+		c.UUToolchainPath = "docker/uudeview/toolchain.json"
+	}
+	if c.UUDockerfilePath == "" {
+		c.UUDockerfilePath = "docker/uudeview/Dockerfile"
+	}
 	if c.OutputDir == "" {
 		c.OutputDir = "generated"
 	}
@@ -110,6 +135,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.BluRayLargeFileBytes == 0 {
 		c.BluRayLargeFileBytes = defaultBluRayLargeFile
+	}
+	if c.Zip64LargeFileBytes == 0 {
+		c.Zip64LargeFileBytes = defaultZip64LargeFile
 	}
 	if c.BluRayMediumFileBytes == 0 {
 		c.BluRayMediumFileBytes = defaultBluRayMediumFile
@@ -138,6 +166,9 @@ func (c Config) Validate() error {
 	}
 	if c.BluRayMediumFileBytes <= 0 || c.BluRayMediumFileCount < 1 {
 		return fmt.Errorf("Blu-ray extra-stream size and count must be positive")
+	}
+	if c.Zip64LargeFileBytes <= 0 {
+		return fmt.Errorf("the zip64 large-member size must be positive")
 	}
 	if c.Workers < 1 {
 		return fmt.Errorf("generator workers must be positive")
@@ -194,6 +225,45 @@ func Generate(ctx context.Context, config Config) ([]fixture.GeneratedManifest, 
 		}
 		sevenZipToolchain = &loaded
 	}
+	var gnuToolsToolchain *GNUToolsToolchain
+	if selectedCasesRequireGNUTools(cases, config.CaseIDs) {
+		loaded, err := LoadGNUToolsToolchain(config.GNUToolsToolchainPath)
+		if err != nil {
+			return nil, err
+		}
+		if config.BuildImages {
+			if err := buildGNUToolsImage(ctx, config, loaded); err != nil {
+				return nil, err
+			}
+		}
+		// The distribution writers have no upstream release tarball to pin by
+		// hash, so the pin is the base image digest plus the exact package
+		// versions. Checking them against the built image is what makes that
+		// pin mean something.
+		if err := verifyGNUToolsPackages(ctx, config, loaded); err != nil {
+			return nil, err
+		}
+		gnuToolsToolchain = &loaded
+	}
+	var uuToolchain *uucodec.Toolchain
+	if selectedCasesRequireUUCodec(cases, config.CaseIDs) {
+		loaded, err := uucodec.LoadToolchain(config.UUToolchainPath)
+		if err != nil {
+			return nil, err
+		}
+		if config.BuildImages {
+			if err := uucodec.BuildImage(ctx, config.DockerBinary, config.UUDockerfilePath, loaded); err != nil {
+				return nil, err
+			}
+		}
+		uuToolchain = &loaded
+	}
+	writers := writerToolchains{
+		PAR2:     par2Toolchain,
+		SevenZip: sevenZipToolchain,
+		GNUTools: gnuToolsToolchain,
+		UUCodec:  uuToolchain,
+	}
 
 	if err := os.MkdirAll(config.OutputDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create output directory: %w", err)
@@ -243,7 +313,7 @@ func Generate(ctx context.Context, config Config) ([]fixture.GeneratedManifest, 
 	worker := func() {
 		defer workerGroup.Done()
 		for job := range queue {
-			manifest, err := generateCase(workCtx, config, job.archiveCase, job.toolchain, par2Toolchain, sevenZipToolchain)
+			manifest, err := generateCase(workCtx, config, job.archiveCase, job.toolchain, writers)
 			if err != nil {
 				select {
 				case errs <- fmt.Errorf("generate fixture %q: %w", job.archiveCase.ID, err):
@@ -298,9 +368,9 @@ func generateCase(
 	config Config,
 	archiveCase fixture.ArchiveCase,
 	toolchain Toolchain,
-	par2Toolchain *PAR2Toolchain,
-	sevenZipToolchain *SevenZipToolchain,
+	writers writerToolchains,
 ) (fixture.GeneratedManifest, error) {
+	writers.RAR = toolchain
 	caseDir, err := filepath.Abs(filepath.Join(config.OutputDir, archiveCase.ID))
 	if err != nil {
 		return fixture.GeneratedManifest{}, fmt.Errorf("resolve fixture directory: %w", err)
@@ -323,21 +393,18 @@ func generateCase(
 	if err != nil {
 		return fixture.GeneratedManifest{}, fmt.Errorf("write fixture %q payload: %w", archiveCase.ID, err)
 	}
-	if archiveCase.ArchiveFormat == fixture.SevenZip {
-		if sevenZipToolchain == nil {
-			return fixture.GeneratedManifest{}, fmt.Errorf("fixture %q requires the pinned 7-Zip toolchain", archiveCase.ID)
-		}
-		if err := createSevenZipArchive(ctx, config, archiveCase, *sevenZipToolchain, caseDir, inputs); err != nil {
+	payloadBytes := totalDigestBytes(expected)
+	var innerArchive *fixture.InnerArchiveDetails
+	if archiveCase.InnerArchive != fixture.NoInnerArchive {
+		// The wrapped lanes hand the outer writer a single inner container
+		// instead of the media files, which is what a post that ships a
+		// .tar.xz inside a stored RAR set actually looks like.
+		if inputs, innerArchive, err = writeInnerArchive(ctx, config, archiveCase, writers, caseDir, inputs); err != nil {
 			return fixture.GeneratedManifest{}, err
 		}
-	} else {
-		args, err := archiveCase.RARArgs(filepath.ToSlash(filepath.Join("archive", "fixture.rar")), inputs)
-		if err != nil {
-			return fixture.GeneratedManifest{}, err
-		}
-		if err := runRAR(ctx, config.DockerBinary, toolchain, caseDir, args...); err != nil {
-			return fixture.GeneratedManifest{}, fmt.Errorf("create fixture %q: %w", archiveCase.ID, err)
-		}
+	}
+	if err := createArchive(ctx, config, archiveCase, writers, caseDir, inputs); err != nil {
+		return fixture.GeneratedManifest{}, fmt.Errorf("create fixture %q: %w", archiveCase.ID, err)
 	}
 
 	archives, firstVolume, err := digestArchiveFiles(archiveDir, caseDir, archiveCase.ArchiveFormat)
@@ -347,28 +414,49 @@ func generateCase(
 	if requiresMultiVolumeArchive(archiveCase) && len(archives) < 2 {
 		return fixture.GeneratedManifest{}, fmt.Errorf("fixture %q did not create a multi-volume archive; increase bytes per file or reduce volume size", archiveCase.ID)
 	}
-	if archiveCase.ArchiveFormat == fixture.SevenZip {
-		// 7-Zip's own extraction against the payload digests is the oracle
-		// for this lane, exactly as RARLAB's test is for the RAR lanes.
-		if err := verifySevenZipArchive(ctx, config, archiveCase, *sevenZipToolchain, caseDir, firstVolume, expected); err != nil {
-			return fixture.GeneratedManifest{}, fmt.Errorf("verify fixture %q with 7-Zip: %w", archiveCase.ID, err)
+	if firstVolume, err = primaryArchiveFile(archives, archiveCase.ArchiveFormat); err != nil {
+		return fixture.GeneratedManifest{}, fmt.Errorf("fixture %q: %w", archiveCase.ID, err)
+	}
+	// Every zip is parsed back off disk before it is read back, so what goes
+	// into the manifest is what the archive contains rather than what the
+	// writer was asked for. A lane whose declared structure is missing is
+	// refused here: it would otherwise post as an ordinary zip and report full
+	// zip64 support for a client that had never been asked for any.
+	var zipStructure *fixture.ZipStructureDetails
+	if archiveCase.ArchiveFormat == fixture.Zip {
+		details, err := inspectZipStructure(filepath.Join(caseDir, filepath.FromSlash(firstVolume)), firstVolume)
+		if err != nil {
+			return fixture.GeneratedManifest{}, fmt.Errorf("inspect fixture %q zip structure: %w", archiveCase.ID, err)
 		}
-	} else {
-		testArgs := []string{"t", "-idq", "-y"}
-		if archiveCase.RequiresPassword() {
-			testArgs = append(testArgs, "-p"+fixture.FixturePassword)
+		details.Declared = archiveCase.ZipStructure
+		if err := requireZipStructure(archiveCase, details); err != nil {
+			return fixture.GeneratedManifest{}, err
 		}
-		testArgs = append(testArgs, filepath.ToSlash(firstVolume))
-		if err := runRAR(ctx, config.DockerBinary, toolchain, caseDir, testArgs...); err != nil {
-			return fixture.GeneratedManifest{}, fmt.Errorf("verify fixture %q with RARLAB: %w", archiveCase.ID, err)
+		zipStructure = &details
+	}
+	if err := verifyArchive(ctx, config, archiveCase, writers, caseDir, firstVolume, expected); err != nil {
+		return fixture.GeneratedManifest{}, fmt.Errorf("verify fixture %q: %w", archiveCase.ID, err)
+	}
+	archiveBytes := totalDigestBytes(archives)
+	var sidecars []fixture.SidecarDetails
+	if archiveCase.Sidecar != fixture.NoSidecar {
+		// The sidecar describes the archive files, so it can only be written
+		// once they exist and their digests are known.
+		sidecar, err := writeSFVSidecar(ctx, config, archiveCase, writers, caseDir, archives)
+		if err != nil {
+			return fixture.GeneratedManifest{}, err
+		}
+		sidecars = append(sidecars, sidecar)
+		if archives, _, err = digestArchiveFiles(archiveDir, caseDir, archiveCase.ArchiveFormat); err != nil {
+			return fixture.GeneratedManifest{}, fmt.Errorf("inspect fixture %q archive: %w", archiveCase.ID, err)
 		}
 	}
 	repair, postedFiles, withheld, err := applyRepairProfile(ctx, repairInputs{
 		Config:            config,
 		Case:              archiveCase,
 		RARToolchain:      toolchain,
-		PAR2Toolchain:     par2Toolchain,
-		SevenZipToolchain: sevenZipToolchain,
+		PAR2Toolchain:     writers.PAR2,
+		SevenZipToolchain: writers.SevenZip,
 		CaseDir:           caseDir,
 		SourceArchives:    archives,
 		FirstVolume:       firstVolume,
@@ -378,9 +466,9 @@ func generateCase(
 		return fixture.GeneratedManifest{}, fmt.Errorf("apply repair profile to fixture %q: %w", archiveCase.ID, err)
 	}
 
-	archiveWriter := toolchain.ManifestID()
-	if archiveCase.ArchiveFormat == fixture.SevenZip {
-		archiveWriter = sevenZipToolchain.ManifestID()
+	archiveWriter, err := archiveWriterManifestID(archiveCase, writers)
+	if err != nil {
+		return fixture.GeneratedManifest{}, err
 	}
 	manifest := fixture.GeneratedManifest{
 		SchemaVersion:          fixture.GeneratedManifestSchemaVersion,
@@ -393,6 +481,16 @@ func generateCase(
 		ArchiveFiles:           postedFiles,
 		WithheldFiles:          withheld,
 		Repair:                 repair,
+		Compression: fixture.CompressionDetails{
+			Method:       archiveCase.Compression,
+			PayloadBytes: payloadBytes,
+			ArchiveBytes: archiveBytes,
+			Ratio:        compressionRatio(payloadBytes, archiveBytes),
+		},
+		Sidecars:     sidecars,
+		InnerArchive: innerArchive,
+		ZipStructure: zipStructure,
+		Encoding:     archiveCase.PostEncodingOrDefault(),
 	}
 	if manifest.NZBFileOrder, manifest.NZBOrderSeed, err = fixture.OrderedNZBFiles(
 		archiveCase.NZBOrder,
@@ -416,8 +514,26 @@ func generateCase(
 	return manifest, nil
 }
 
+// requiresMultiVolumeArchive holds for every case that asked the writer to
+// split. A declared volume size that produces one file means the payload was
+// smaller than the split threshold, which is a broken lane, not a small one.
 func requiresMultiVolumeArchive(archiveCase fixture.ArchiveCase) bool {
-	return archiveCase.FileCount > 1
+	return strings.TrimSpace(archiveCase.VolumeSize) != ""
+}
+
+func totalDigestBytes(files []fixture.FileDigest) int64 {
+	var total int64
+	for _, file := range files {
+		total += file.Size
+	}
+	return total
+}
+
+func compressionRatio(payloadBytes, archiveBytes int64) float64 {
+	if payloadBytes <= 0 {
+		return 0
+	}
+	return float64(archiveBytes) / float64(payloadBytes)
 }
 
 func runRAR(ctx context.Context, dockerBinary string, toolchain Toolchain, caseDir string, rarArgs ...string) error {
@@ -455,6 +571,8 @@ func writePayloadFiles(ctx context.Context, dir, caseDir string, archiveCase fix
 		return writeUniformPayloadFiles(ctx, caseDir, archiveCase, config, toolchain)
 	case fixture.BluRayDiscPayloadLayout:
 		return writeBluRayDiscPayloadFiles(ctx, dir, caseDir, archiveCase, config, toolchain)
+	case fixture.Zip64LargePayloadLayout:
+		return writeZip64LargePayloadFiles(ctx, caseDir, archiveCase, config, toolchain)
 	default:
 		return nil, nil, fixture.PayloadRecipe{}, fmt.Errorf("fixture %q has unsupported payload layout %q", archiveCase.ID, layout)
 	}
@@ -484,6 +602,16 @@ func writeUniformPayloadFiles(ctx context.Context, caseDir string, archiveCase f
 }
 
 func uniformMovieBytes(archiveCase fixture.ArchiveCase, config Config) int64 {
+	// A case may name its own payload size when neither default suits it: the
+	// breadth formats post the container the writer produces, and a lane that
+	// compresses well needs more input than one that stores to clear the
+	// posted-size floor. A local reduced-size run still caps it, so the
+	// declaration never overrides an operator asking for a small corpus.
+	if declared := archiveCase.BytesPerFile; strings.TrimSpace(declared) != "" {
+		if bytes, err := fixture.ByteSize(declared); err == nil && bytes > 0 {
+			return scaleDeclaredBytes(bytes, config)
+		}
+	}
 	if archiveCase.FileCount > 1 {
 		return config.MultiVolumeBytesPerFile
 	}
@@ -491,6 +619,45 @@ func uniformMovieBytes(archiveCase fixture.ArchiveCase, config Config) int64 {
 		return config.CompressibleBytesPerFile
 	}
 	return config.BytesPerFile
+}
+
+// scaleDeclaredBytes keeps a case's declared payload size in proportion to
+// whatever the operator asked the run for. On a full run the scale is one and
+// the declaration is used verbatim; a reduced-size smoke run that shrinks
+// --bytes-per-file shrinks the declared lanes by the same factor, so a small
+// corpus stays small in every lane rather than only in the ones that took a
+// default.
+func scaleDeclaredBytes(declared int64, config Config) int64 {
+	if config.BytesPerFile == defaultBytesPerFile {
+		return declared
+	}
+	scaled := declared * config.BytesPerFile / defaultBytesPerFile
+	if scaled < 1 {
+		return 1
+	}
+	return scaled
+}
+
+// writeZip64LargePayloadFiles writes the single member the zip64 large lane
+// posts. It is its own layout rather than a uniform payload with a bigger
+// bytes_per_file because the size is the whole point of the lane: the member
+// has to exceed what a 32-bit ZIP size field can hold, so it must not be
+// scaled by --bytes-per-file the way every other lane's payload is.
+func writeZip64LargePayloadFiles(ctx context.Context, caseDir string, archiveCase fixture.ArchiveCase, config Config, toolchain Toolchain) ([]fixture.FileDigest, []string, fixture.PayloadRecipe, error) {
+	if archiveCase.FileCount != 1 {
+		return nil, nil, fixture.PayloadRecipe{}, fmt.Errorf("fixture %q uses the zip64 large layout, which posts exactly one member, but declares %d", archiveCase.ID, archiveCase.FileCount)
+	}
+	name := "payload-01" + videoExtension(archiveCase.Payload)
+	digest, err := renderVideo(ctx, config, toolchain, caseDir, filepath.ToSlash(filepath.Join("input", name)), archiveCase.Payload, config.Zip64LargeFileBytes, 1)
+	if err != nil {
+		return nil, nil, fixture.PayloadRecipe{}, err
+	}
+	return []fixture.FileDigest{{Path: name, Size: digest.Size, BLAKE3: digest.BLAKE3}},
+		[]string{filepath.ToSlash(filepath.Join("input", name))},
+		fixture.PayloadRecipe{
+			Layout:         fixture.Zip64LargePayloadLayout,
+			LargeFileBytes: config.Zip64LargeFileBytes,
+		}, nil
 }
 
 // writeBluRayDiscPayloadFiles makes an intentionally declared disc-layout
@@ -800,11 +967,59 @@ func digestArchiveFiles(archiveDir, caseDir string, format fixture.ArchiveFormat
 	return digests, first, nil
 }
 
+// isArchiveVolume decides which files in a fixture's archive directory are
+// posted material. Every format names its parts differently, and the media
+// lane posts the payload itself, so the rule is per-format rather than a
+// single suffix test. The SFV sidecar is posted for the lanes that carry one,
+// so it is archive material too.
 func isArchiveVolume(name string, format fixture.ArchiveFormat) bool {
-	if format == fixture.SevenZip {
-		return strings.HasPrefix(name, sevenZipArchiveName)
+	if name == sfvSidecarName {
+		return true
 	}
-	return strings.EqualFold(filepath.Ext(name), ".rar")
+	switch format {
+	case fixture.SevenZip:
+		return strings.HasPrefix(name, sevenZipArchiveName)
+	case fixture.Tar:
+		return strings.HasPrefix(name, tarArchiveBaseName)
+	case fixture.XZCompressed:
+		return strings.EqualFold(filepath.Ext(name), ".xz")
+	case fixture.Zip:
+		// A spanned Info-ZIP set is fixture.z01, fixture.z02, ..., fixture.zip;
+		// the common prefix covers both the parts and the final member.
+		return strings.HasPrefix(name, "fixture.z")
+	case fixture.Media:
+		// Nothing wrapped the payload, so every file staged for posting is
+		// posted material.
+		return true
+	default:
+		return strings.EqualFold(filepath.Ext(name), ".rar")
+	}
+}
+
+// primaryArchiveFile names the file a reader is handed to open the set. For
+// every format but zip that is the first file in read order; a spanned zip
+// puts its central directory in the last member, fixture.zip, and Info-ZIP
+// refuses to be pointed at a .z01.
+func primaryArchiveFile(archives []fixture.FileDigest, format fixture.ArchiveFormat) (string, error) {
+	candidates := make([]fixture.FileDigest, 0, len(archives))
+	for _, file := range archives {
+		if filepath.Base(file.Path) == sfvSidecarName {
+			continue
+		}
+		candidates = append(candidates, file)
+	}
+	if len(candidates) == 0 {
+		return "", fmt.Errorf("the pinned %s writer did not produce an archive file", format)
+	}
+	if format == fixture.Zip {
+		for _, file := range candidates {
+			if filepath.Base(file.Path) == zipArchiveName {
+				return file.Path, nil
+			}
+		}
+		return "", fmt.Errorf("the pinned zip writer did not produce %s", zipArchiveName)
+	}
+	return candidates[0].Path, nil
 }
 
 func postedPathList(files []fixture.FileDigest) []string {

@@ -20,9 +20,24 @@ func selectedCasesRequireSevenZip(cases []fixture.ArchiveCase, selected map[stri
 		if len(selected) > 0 && !selected[archiveCase.ID] {
 			continue
 		}
-		if archiveCase.ArchiveFormat == fixture.SevenZip {
+		if caseUsesSevenZip(archiveCase) {
 			return true
 		}
+	}
+	return false
+}
+
+// caseUsesSevenZip reports whether generating this fixture invokes the pinned
+// 7-Zip at all — as the writer of a 7z or zip container, or as the reader of
+// two zip lanes Info-ZIP cannot read back: an AES-encrypted zip, which
+// Info-ZIP 6.0 has no cipher for, and a spanned one, whose parts Info-ZIP can
+// only rejoin by prompting for each disk.
+func caseUsesSevenZip(archiveCase fixture.ArchiveCase) bool {
+	switch archiveCase.ArchiveFormat {
+	case fixture.SevenZip:
+		return true
+	case fixture.Zip:
+		return true
 	}
 	return false
 }
@@ -48,7 +63,7 @@ func buildSevenZipImage(ctx context.Context, config Config, toolchain SevenZipTo
 // relative to its working directory, so archiving runs from the staging input
 // directory and the stored names carry no input/ prefix — the same result the
 // RAR lane gets from -ep1.
-func runSevenZip(ctx context.Context, config Config, toolchain SevenZipToolchain, caseDir, workdir string, sevenZipArgs ...string) error {
+func sevenZipDockerArgs(toolchain SevenZipToolchain, caseDir, workdir string, sevenZipArgs ...string) []string {
 	args := []string{
 		"run", "--rm", "--platform", toolchain.Platform,
 		"--user", callerDockerUser(),
@@ -56,8 +71,11 @@ func runSevenZip(ctx context.Context, config Config, toolchain SevenZipToolchain
 		"--workdir", "/work/" + filepath.ToSlash(workdir),
 		toolchain.Image,
 	}
-	args = append(args, sevenZipArgs...)
-	return runCommand(ctx, config.DockerBinary, args...)
+	return append(args, sevenZipArgs...)
+}
+
+func runSevenZip(ctx context.Context, config Config, toolchain SevenZipToolchain, caseDir, workdir string, sevenZipArgs ...string) error {
+	return runCommand(ctx, config.DockerBinary, sevenZipDockerArgs(toolchain, caseDir, workdir, sevenZipArgs...)...)
 }
 
 // createSevenZipArchive writes the fixture's 7z volumes. inputs are the same

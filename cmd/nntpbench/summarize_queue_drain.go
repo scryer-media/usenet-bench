@@ -94,14 +94,14 @@ func loadQueueDrainReport(root string) (queueDrainReport, error) {
 }
 
 func queueDrainLaneFor(artifact benchmark.QueueArtifact, plannedRuns map[string]benchmark.Run) (queueDrainLane, error) {
-	if artifact.SchemaVersion != 7 {
-		return queueDrainLane{}, fmt.Errorf("uses queue artifact schema %d, want 7", artifact.SchemaVersion)
+	if artifact.SchemaVersion != 8 {
+		return queueDrainLane{}, fmt.Errorf("uses queue artifact schema %d, want 8", artifact.SchemaVersion)
 	}
 	if !summarizableSequentialStatus(artifact.Status) {
 		return queueDrainLane{}, fmt.Errorf("is not publishable: status=%s error=%s", artifact.Status, artifact.Error)
 	}
-	if artifact.AdapterResult == nil || artifact.AdapterResult.SchemaVersion != 6 || artifact.AdapterResult.SuiteID != artifact.SuiteID || artifact.AdapterResult.SubmissionMode != benchmark.SubmissionModeQueueDrain {
-		return queueDrainLane{}, fmt.Errorf("lacks a matching queue adapter result of schema 6")
+	if artifact.AdapterResult == nil || artifact.AdapterResult.SchemaVersion != 7 || artifact.AdapterResult.SuiteID != artifact.SuiteID || artifact.AdapterResult.SubmissionMode != benchmark.SubmissionModeQueueDrain {
+		return queueDrainLane{}, fmt.Errorf("lacks a matching queue adapter result of schema 7")
 	}
 	if len(artifact.Runs) < benchmark.QueueTransitionMinimumCopies || len(artifact.Jobs) != len(artifact.Runs) || len(artifact.AdapterResult.Jobs) != len(artifact.Runs) {
 		return queueDrainLane{}, fmt.Errorf("has %d runs, %d jobs and %d adapter jobs; want one job per queued copy", len(artifact.Runs), len(artifact.Jobs), len(artifact.AdapterResult.Jobs))

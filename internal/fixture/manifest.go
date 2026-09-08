@@ -9,7 +9,7 @@ import (
 // GeneratedManifestSchemaVersion is the schema every newly generated fixture
 // manifest is written at. Older manifests stay readable; the loader fills in
 // the fields their schema predates.
-const GeneratedManifestSchemaVersion = 6
+const GeneratedManifestSchemaVersion = 8
 
 // FileDigest describes a fixture input, archive volume, or repair artifact.
 // Paths are always relative to the fixture directory.
@@ -50,6 +50,99 @@ type GeneratedManifest struct {
 	NZBFileOrder []string      `json:"nzb_file_order"`
 	NZBOrderSeed uint64        `json:"nzb_order_seed"`
 	Repair       RepairDetails `json:"repair"`
+	// Compression records what the writer actually achieved: the payload
+	// bytes handed to it, the container bytes it produced, and the ratio
+	// between them. A compression lane that turns out not to compress is a
+	// lane measuring the wrong thing, and this is where that shows.
+	Compression CompressionDetails `json:"compression"`
+	// Sidecars are non-archive files posted alongside the container, such as
+	// an SFV checksum list. They are posted material, so they are already in
+	// ArchiveFiles; this names them and says what wrote them.
+	Sidecars []SidecarDetails `json:"sidecars,omitempty"`
+	// InnerArchive describes a second container between the payload and the
+	// posted one, for the lanes that wrap.
+	InnerArchive *InnerArchiveDetails `json:"inner_archive,omitempty"`
+	// ZipStructure is what the posted zip was found to contain when it was
+	// parsed back off disk. Every zip lane carries it, including the ordinary
+	// ones, so "this archive is zip64" is a reading of the bytes rather than a
+	// restatement of the switch the writer was given.
+	ZipStructure *ZipStructureDetails `json:"zip_structure,omitempty"`
+	// Encoding is how the fixture's article bodies are encoded. It repeats
+	// Case.Encoding so a reader of the manifest need not know which field is
+	// authoritative; the two are written together and checked on load.
+	Encoding PostEncoding `json:"encoding"`
+}
+
+// CompressionDetails is the writer's measured result for this fixture.
+type CompressionDetails struct {
+	// Method is the matrix's declared compression for this case, repeated
+	// here so the numbers below are never read without it.
+	Method Compression `json:"method"`
+	// PayloadBytes is the total size of the files handed to the writer, and
+	// ArchiveBytes the total size of the container it produced. For the
+	// wrapped lanes PayloadBytes is still the media, not the inner archive.
+	PayloadBytes int64 `json:"payload_bytes"`
+	ArchiveBytes int64 `json:"archive_bytes"`
+	// Ratio is ArchiveBytes/PayloadBytes: 1.0 for a stored lane, below 1.0
+	// where the codec did something.
+	Ratio float64 `json:"ratio"`
+}
+
+// SidecarDetails names one posted non-archive file and the tool that
+// validated it.
+type SidecarDetails struct {
+	Kind Sidecar `json:"kind"`
+	Path string  `json:"path"`
+	// VerifiedBy is the pinned reader that confirmed the sidecar's contents
+	// against the files it describes, at generation time.
+	VerifiedBy ToolchainID `json:"verified_by"`
+}
+
+// InnerArchiveDetails describes the container the outer writer stored.
+type InnerArchiveDetails struct {
+	Kind InnerArchive `json:"kind"`
+	Path string       `json:"path"`
+	Size int64        `json:"size"`
+	// Toolchain is the pinned writer that produced the inner container, which
+	// is not in general the one that produced the outer.
+	Toolchain ToolchainID `json:"toolchain"`
+}
+
+// ZipStructureDetails is what a posted zip actually carries, read back out of
+// the archive the writer produced. Nothing in it comes from the switch the
+// matrix asked for: Zip64 is true because the parser found zip64 records, and
+// DataDescriptorEntries counts local headers that really do set general
+// purpose bit 3. A lane whose declared structure is not what the bytes carry
+// is refused at generation time rather than posted under a name it has not
+// earned.
+type ZipStructureDetails struct {
+	// Declared is the matrix's zip_structure for this case, repeated here so
+	// the findings below are never read without the claim they were checked
+	// against. Empty is the ordinary zip the other zip lanes carry.
+	Declared ZipStructure `json:"declared,omitempty"`
+	// InspectedFile is the archive file that was parsed: the one a reader is
+	// handed to open the set.
+	InspectedFile string `json:"inspected_file"`
+	// Zip64 is the headline finding: the archive carries zip64 structures,
+	// either an end-of-central-directory record and its locator or a zip64
+	// extra field on an entry.
+	Zip64                  bool `json:"zip64"`
+	Zip64EOCDRecord        bool `json:"zip64_eocd_record"`
+	Zip64EOCDLocator       bool `json:"zip64_eocd_locator"`
+	Zip64ExtraFieldEntries int  `json:"zip64_extra_field_entries"`
+	// Entries is how many members the central directory lists, and
+	// LocalHeadersInspected how many of them live in the inspected file — a
+	// spanned set keeps most of its local headers on earlier parts.
+	Entries               int `json:"entries"`
+	LocalHeadersInspected int `json:"local_headers_inspected"`
+	// DataDescriptorEntries counts inspected local headers with general
+	// purpose bit 3 set, so the member's CRC and sizes trail the data instead
+	// of preceding it.
+	DataDescriptorEntries int `json:"data_descriptor_entries"`
+	// LargestMemberBytes is the biggest uncompressed member size the central
+	// directory records. Past 4 GiB it can only be expressed in a zip64 extra
+	// field.
+	LargestMemberBytes int64 `json:"largest_member_bytes"`
 }
 
 // RepairDetails describes the bounded fault injected into a fixture. The
@@ -104,6 +197,12 @@ type ToolchainID struct {
 	// Version is the upstream release the toolchain installs, where the
 	// toolchain declares one separately from its id.
 	Version string `json:"version,omitempty"`
+	// Packages records the exact distribution package versions an image
+	// installs, for the writers that come from a distribution rather than an
+	// upstream tarball. The image is digest-pinned and the generator refuses
+	// to run when the versions inside it differ from the ones the toolchain
+	// file declares, so this is a recorded fact, not a hope.
+	Packages map[string]string `json:"packages,omitempty"`
 }
 
 func LoadGeneratedManifest(path string) (GeneratedManifest, error) {
@@ -142,7 +241,64 @@ func LoadGeneratedManifest(path string) (GeneratedManifest, error) {
 	if err := validateNZBFileOrder(manifest); err != nil {
 		return GeneratedManifest{}, fmt.Errorf("fixture manifest %s: %w", path, err)
 	}
+	if manifest.SchemaVersion >= 8 && manifest.Case.ArchiveFormat == Zip {
+		// From schema 8 every zip fixture carries what its archive was found to
+		// contain. A zip manifest without it has been edited, or was written by
+		// a generator that never parsed the archive back, and either way the
+		// zip64 claim in it cannot be trusted.
+		if manifest.ZipStructure == nil {
+			return GeneratedManifest{}, fmt.Errorf("fixture manifest %s is a zip fixture with no zip_structure record", path)
+		}
+		if manifest.ZipStructure.Declared != manifest.Case.ZipStructure {
+			return GeneratedManifest{}, fmt.Errorf("fixture manifest %s disagrees with itself about zip_structure: case says %q, zip_structure says %q", path, manifest.Case.ZipStructure, manifest.ZipStructure.Declared)
+		}
+	}
+	if manifest.SchemaVersion < 7 {
+		// Schema 6 and earlier predate the uuencode lane and the compression
+		// record. Every fixture written at those versions was yEnc, and its
+		// compression result can be recomputed from the digests it already
+		// carries.
+		manifest.Case.Encoding = YEncEncoding
+		manifest.Encoding = YEncEncoding
+		manifest.Compression = manifest.measuredCompression()
+		return manifest, nil
+	}
+	if !manifest.Encoding.Valid() {
+		return GeneratedManifest{}, fmt.Errorf("fixture manifest %s has unsupported encoding %q", path, manifest.Encoding)
+	}
+	if manifest.Case.PostEncodingOrDefault() != manifest.Encoding {
+		return GeneratedManifest{}, fmt.Errorf("fixture manifest %s disagrees with itself about encoding: case says %q, manifest says %q", path, manifest.Case.PostEncodingOrDefault(), manifest.Encoding)
+	}
 	return manifest, nil
+}
+
+// measuredCompression derives the writer's result from the digests already in
+// the manifest. It is what the generator records, and what the loader
+// backfills for manifests written before the field existed.
+func (m GeneratedManifest) measuredCompression() CompressionDetails {
+	details := CompressionDetails{Method: m.Case.Compression}
+	for _, file := range m.ExpectedFiles {
+		details.PayloadBytes += file.Size
+	}
+	for _, file := range m.SourceArchiveFiles {
+		details.ArchiveBytes += file.Size
+	}
+	if details.ArchiveBytes == 0 {
+		for _, file := range m.ArchiveFiles {
+			details.ArchiveBytes += file.Size
+		}
+	}
+	if details.PayloadBytes > 0 {
+		details.Ratio = float64(details.ArchiveBytes) / float64(details.PayloadBytes)
+	}
+	return details
+}
+
+// MeasuredCompression is measuredCompression under the name the generator
+// calls it by. It is exported so fixture generation records exactly what the
+// loader would have derived.
+func (m GeneratedManifest) MeasuredCompression() CompressionDetails {
+	return m.measuredCompression()
 }
 
 // MinimumPostedBytes is the smallest archive a benchmark fixture may post.

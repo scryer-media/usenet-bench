@@ -69,6 +69,7 @@ type PlanOptions struct {
 	Profile           string
 	ServerLink        ServerLinkProfile
 	StorageProfile    StorageProfile
+	ArticleProfile    ArticleProfile
 	Repetitions       int
 	Seed              int64
 	// ClientExclusions removes one client from the lanes of one fixture, with
@@ -112,9 +113,12 @@ type Plan struct {
 	Profile           string             `json:"profile"`
 	ServerLink        ServerLinkProfile  `json:"server_link"`
 	StorageProfile    StorageProfile     `json:"storage_profile"`
-	Repetitions       int                `json:"repetitions"`
-	ClientExclusions  []ClientExclusion  `json:"client_exclusions,omitempty"`
-	Runs              []Run              `json:"runs"`
+	// ArticleProfile is the decoded article size the fixtures in this plan
+	// were seeded at. It is a stratum, not a setting: see article.go.
+	ArticleProfile   ArticleProfile    `json:"article_profile"`
+	Repetitions      int               `json:"repetitions"`
+	ClientExclusions []ClientExclusion `json:"client_exclusions,omitempty"`
+	Runs             []Run             `json:"runs"`
 }
 
 // Run is one planned fixture submission. Primary execution gives every run a
@@ -132,6 +136,7 @@ type Run struct {
 	Profile          string            `json:"profile"`
 	ServerLink       ServerLinkProfile `json:"server_link"`
 	StorageProfile   StorageProfile    `json:"storage_profile"`
+	ArticleProfile   ArticleProfile    `json:"article_profile"`
 	Repetition       int               `json:"repetition"`
 	FreshClientState bool              `json:"fresh_client_state"`
 	Metric           string            `json:"metric"`
@@ -147,6 +152,9 @@ func BuildPlan(options PlanOptions) (Plan, error) {
 	if options.StorageProfile.ID == "" {
 		options.StorageProfile = DefaultStorageProfile()
 	}
+	if options.ArticleProfile.ID == "" {
+		options.ArticleProfile = DefaultArticleProfile()
+	}
 	if len(options.ClientProfiles) == 0 {
 		options.ClientProfiles = DefaultClientProfiles(options.Clients)
 	}
@@ -160,7 +168,7 @@ func BuildPlan(options PlanOptions) (Plan, error) {
 		return Plan{}, err
 	}
 	plan := Plan{
-		SchemaVersion:     6,
+		SchemaVersion:     7,
 		Seed:              options.Seed,
 		FixtureIDs:        append([]string(nil), options.FixtureIDs...),
 		Clients:           append([]Client(nil), options.Clients...),
@@ -171,6 +179,7 @@ func BuildPlan(options PlanOptions) (Plan, error) {
 		Profile:           options.Profile,
 		ServerLink:        options.ServerLink,
 		StorageProfile:    options.StorageProfile,
+		ArticleProfile:    options.ArticleProfile,
 		Repetitions:       options.Repetitions,
 		ClientExclusions:  append([]ClientExclusion(nil), options.ClientExclusions...),
 	}
@@ -220,6 +229,7 @@ func BuildPlan(options PlanOptions) (Plan, error) {
 				Profile:          plan.Profile,
 				ServerLink:       plan.ServerLink,
 				StorageProfile:   plan.StorageProfile,
+				ArticleProfile:   plan.ArticleProfile,
 				Repetition:       benchmarkRound.repetition,
 				FreshClientState: true,
 				Metric:           PrimaryMetric,
@@ -233,7 +243,7 @@ func BuildPlan(options PlanOptions) (Plan, error) {
 }
 
 func (p Plan) Validate() error {
-	if p.SchemaVersion != 6 {
+	if p.SchemaVersion != 7 {
 		return fmt.Errorf("unsupported benchmark plan schema version %d", p.SchemaVersion)
 	}
 	if err := validateOptions(PlanOptions{
@@ -246,6 +256,7 @@ func (p Plan) Validate() error {
 		Profile:           p.Profile,
 		ServerLink:        p.ServerLink,
 		StorageProfile:    p.StorageProfile,
+		ArticleProfile:    p.ArticleProfile,
 		Repetitions:       p.Repetitions,
 		Seed:              p.Seed,
 		ClientExclusions:  p.ClientExclusions,
@@ -292,6 +303,9 @@ func (p Plan) Validate() error {
 		}
 		if run.StorageProfile != p.StorageProfile {
 			return fmt.Errorf("benchmark plan run %s does not use the plan's storage profile %q", run.ID, p.StorageProfile.ID)
+		}
+		if run.ArticleProfile != p.ArticleProfile {
+			return fmt.Errorf("benchmark plan run %s does not use the plan's article profile %q", run.ID, p.ArticleProfile.ID)
 		}
 		if !targets[run.ExecutionTarget] {
 			return fmt.Errorf("benchmark plan run %s has an unplanned execution target %q", run.ID, run.ExecutionTarget)
@@ -368,6 +382,9 @@ func validateOptions(options PlanOptions) error {
 	}
 	if options.Profile != ProfileStock && options.Profile != ProfileEquivalentThroughput {
 		return fmt.Errorf("unsupported benchmark profile %q", options.Profile)
+	}
+	if err := options.ArticleProfile.Validate(); err != nil {
+		return err
 	}
 	if err := options.ServerLink.Validate(); err != nil {
 		return err

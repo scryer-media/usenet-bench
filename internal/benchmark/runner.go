@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/scryer-media/usenet-bench/internal/fixture"
+	"github.com/scryer-media/usenet-bench/internal/nntp"
 )
 
 // AdapterCatalog declares one external, client-specific adapter for each
@@ -46,6 +47,7 @@ type AdapterResult struct {
 	TransportLabel           string            `json:"transport_label"`
 	ServerLink               ServerLinkProfile `json:"server_link"`
 	StorageProfile           StorageProfile    `json:"storage_profile"`
+	ArticleProfile           ArticleProfile    `json:"article_profile"`
 	QueuedAt                 time.Time         `json:"queued_at"`
 	FirstArticleAt           *time.Time        `json:"first_article_at,omitempty"`
 	CompletionAt             time.Time         `json:"completion_at"`
@@ -79,15 +81,20 @@ type RunConfig struct {
 }
 
 type RunArtifact struct {
-	SchemaVersion         int                   `json:"schema_version"`
-	Run                   Run                   `json:"run"`
-	FixtureClass          fixture.FixtureClass  `json:"fixture_class"`
-	Repair                fixture.RepairDetails `json:"repair"`
-	Status                string                `json:"status"`
-	AdapterResult         *AdapterResult        `json:"adapter_result,omitempty"`
-	ShaperBefore          *ShaperSnapshot       `json:"shaper_before,omitempty"`
-	ShaperAfter           *ShaperSnapshot       `json:"shaper_after,omitempty"`
-	ShaperDownstreamBytes uint64                `json:"shaper_downstream_bytes,omitempty"`
+	SchemaVersion int                   `json:"schema_version"`
+	Run           Run                   `json:"run"`
+	FixtureClass  fixture.FixtureClass  `json:"fixture_class"`
+	Repair        fixture.RepairDetails `json:"repair"`
+	// Encoding is how the fixture's articles were encoded, copied from the
+	// fixture manifest. It is a label a summary can group by, not a stratum:
+	// a uuencoded fixture is a different fixture, so it is never paired with
+	// a yEnc one anyway.
+	Encoding              fixture.PostEncoding `json:"encoding"`
+	Status                string               `json:"status"`
+	AdapterResult         *AdapterResult       `json:"adapter_result,omitempty"`
+	ShaperBefore          *ShaperSnapshot      `json:"shaper_before,omitempty"`
+	ShaperAfter           *ShaperSnapshot      `json:"shaper_after,omitempty"`
+	ShaperDownstreamBytes uint64               `json:"shaper_downstream_bytes,omitempty"`
 	// ShaperArticleCensus is present when the shaper counted the client's
 	// command lines (attestation schema 3).
 	ShaperArticleCensus              *ShaperArticleCensus `json:"shaper_article_census,omitempty"`
@@ -329,7 +336,7 @@ func planNeedsVerifiedTLS(plan Plan) bool {
 }
 
 func executeRun(parent context.Context, config RunConfig, run Run) (artifact RunArtifact) {
-	artifact = RunArtifact{SchemaVersion: 7, Run: run, Status: "failed"}
+	artifact = RunArtifact{SchemaVersion: 8, Run: run, Status: "failed"}
 	runDir := filepath.Join(config.ArtifactRoot, run.ID)
 	if err := os.Mkdir(runDir, 0o755); err != nil {
 		artifact.Error = fmt.Sprintf("create isolated run directory: %v", err)
@@ -364,8 +371,17 @@ func executeRun(parent context.Context, config RunConfig, run Run) (artifact Run
 	}
 	artifact.FixtureClass = manifest.Case.Class
 	artifact.Repair = manifest.Repair
+	artifact.Encoding = manifest.Case.PostEncodingOrDefault()
 	nzbPath, err := fixtureNZBPath(fixtureDir, run.FixtureID)
 	if err != nil {
+		artifact.Error = err.Error()
+		return artifact
+	}
+	// The plan says which article-size stratum this result belongs to; the
+	// seeded NZB is the only record of what the corpus was actually posted
+	// at. Disagreement means the result would be filed under the wrong
+	// stratum, so it is refused before the client is started.
+	if err := nntp.AssertNZBArticleSize(nzbPath, manifest, run.ArticleProfile.RawBytes); err != nil {
 		artifact.Error = err.Error()
 		return artifact
 	}
@@ -562,6 +578,8 @@ func adapterEnvironment(config RunConfig, run Run, fixtureDir, nzbPath, archiveP
 		"BENCH_SERVER_EGRESS_BURST_BYTES=" + strconv.FormatUint(run.ServerLink.BurstBytes, 10),
 		"BENCH_SERVER_RTT_MICROS=" + strconv.FormatUint(run.ServerLink.RTTMicros, 10),
 		"BENCH_STORAGE_PROFILE=" + encodeStorageProfile(run.StorageProfile),
+		"BENCH_ARTICLE_PROFILE_ID=" + run.ArticleProfile.ID,
+		"BENCH_ARTICLE_RAW_BYTES=" + strconv.Itoa(run.ArticleProfile.RawBytes),
 	}
 }
 
@@ -611,7 +629,7 @@ func loadAdapterResult(path string) (AdapterResult, error) {
 }
 
 func (r AdapterResult) ValidateFor(run Run) error {
-	if r.SchemaVersion != 6 || r.RunID != run.ID || r.Client != run.Client || r.ArchiveToolchain != run.ArchiveToolchain || r.ExecutionTarget != run.ExecutionTarget || r.Transport != run.Transport || r.TLSValidation != run.TLSValidation || r.TransportLabel != run.TransportLabel || r.ServerLink != run.ServerLink || r.StorageProfile != run.StorageProfile {
+	if r.SchemaVersion != 7 || r.RunID != run.ID || r.Client != run.Client || r.ArchiveToolchain != run.ArchiveToolchain || r.ExecutionTarget != run.ExecutionTarget || r.Transport != run.Transport || r.TLSValidation != run.TLSValidation || r.TransportLabel != run.TransportLabel || r.ServerLink != run.ServerLink || r.StorageProfile != run.StorageProfile || r.ArticleProfile != run.ArticleProfile {
 		return fmt.Errorf("adapter result does not match planned run %s", run.ID)
 	}
 	if r.QueuedAt.IsZero() || r.CompletionAt.IsZero() || r.CompletionAt.Before(r.QueuedAt) {

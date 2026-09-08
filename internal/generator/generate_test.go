@@ -161,12 +161,28 @@ func TestUniformMovieSizeUsesMultiInputOverride(t *testing.T) {
 	}
 }
 
-func TestOnlyMultiInputFixtureRequiresMultipleVolumes(t *testing.T) {
-	if requiresMultiVolumeArchive(fixture.ArchiveCase{FileCount: 1}) {
-		t.Fatal("single-movie fixture must allow a single RAR volume")
+func TestOnlyASplitFixtureRequiresMultipleVolumes(t *testing.T) {
+	// A lane that declared no volume size asked for one file and must get
+	// one; a lane that declared one asked the writer to split, and a single
+	// output file means the payload never reached the split threshold.
+	if requiresMultiVolumeArchive(fixture.ArchiveCase{FileCount: 4}) {
+		t.Fatal("a fixture with no volume_size must allow a single archive file")
 	}
-	if !requiresMultiVolumeArchive(fixture.ArchiveCase{FileCount: 4}) {
-		t.Fatal("multi-input fixture must require multiple RAR volumes")
+	if !requiresMultiVolumeArchive(fixture.ArchiveCase{FileCount: 1, VolumeSize: "32m"}) {
+		t.Fatal("a fixture that declared volume_size must produce multiple volumes")
+	}
+}
+
+func TestDeclaredPayloadSizeScalesWithTheRequestedRunSize(t *testing.T) {
+	full := Config{BytesPerFile: defaultBytesPerFile, MultiVolumeBytesPerFile: 40 << 20, CompressibleBytesPerFile: 270 << 20}
+	archiveCase := fixture.ArchiveCase{FileCount: 1, Payload: fixture.IncompressiblePayload, BytesPerFile: "224m"}
+	if got, want := uniformMovieBytes(archiveCase, full), int64(224<<20); got != want {
+		t.Fatalf("declared payload bytes = %d, want %d", got, want)
+	}
+	small := full
+	small.BytesPerFile = defaultBytesPerFile / 10
+	if got, want := uniformMovieBytes(archiveCase, small), int64(224<<20)/10; got != want {
+		t.Fatalf("reduced-size payload bytes = %d, want %d", got, want)
 	}
 }
 

@@ -106,27 +106,24 @@ func SeedWithNyuu(ctx context.Context, config NyuuSeedConfig) (SeedResult, error
 	if err := verifyArchiveFiles(fixtureDir, manifest.WithheldFiles); err != nil {
 		return SeedResult{}, err
 	}
+	// Nyuu writes yEnc and nothing else. A uuencoded fixture reaching this
+	// path would be posted in the wrong encoding, so it is refused here
+	// rather than producing a corpus no client can read.
+	if manifest.Case.PostEncodingOrDefault() != fixture.YEncEncoding {
+		return SeedResult{}, fmt.Errorf("fixture %q is %s-encoded; Nyuu writes yEnc only", manifest.Case.ID, manifest.Case.PostEncodingOrDefault())
+	}
 	plan, err := newPostingPlan(manifest)
 	if err != nil {
 		return SeedResult{}, err
 	}
 
-	nzbPath := config.NZBPath
-	if nzbPath == "" {
-		nzbPath = filepath.Join(fixtureDir, manifest.Case.ID+".nzb")
-	}
-	nzbPath, err = filepath.Abs(nzbPath)
+	nzbPath, err := resolveSeedNZBPath(fixtureDir, config.NZBPath, manifest.Case.ID)
 	if err != nil {
-		return SeedResult{}, fmt.Errorf("resolve NZB output path: %w", err)
+		return SeedResult{}, err
 	}
 	relativeNZB, err := filepath.Rel(fixtureDir, nzbPath)
-	if err != nil || relativeNZB == "." || strings.HasPrefix(relativeNZB, ".."+string(os.PathSeparator)) || relativeNZB == ".." {
-		return SeedResult{}, fmt.Errorf("NZB output path must be inside fixture directory %s", fixtureDir)
-	}
-	if _, err := os.Stat(nzbPath); err == nil {
-		return SeedResult{}, fmt.Errorf("NZB output already exists: %s (use a new run id/path to preserve prior evidence)", nzbPath)
-	} else if !os.IsNotExist(err) {
-		return SeedResult{}, fmt.Errorf("inspect NZB output %s: %w", nzbPath, err)
+	if err != nil {
+		return SeedResult{}, err
 	}
 
 	args := []string{

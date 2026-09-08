@@ -36,6 +36,7 @@ type Config struct {
 	TLSValidation    benchmark.TLSValidation
 	ServerLink       benchmark.ServerLinkProfile
 	StorageProfile   benchmark.StorageProfile
+	ArticleProfile   benchmark.ArticleProfile
 	FixtureDir       string
 	NZBPath          string
 	QueueInput       *benchmark.QueueInput
@@ -96,6 +97,17 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	article, err := benchmark.ResolveArticleProfile(required(getenv, "BENCH_ARTICLE_PROFILE_ID"))
+	if err != nil {
+		return Config{}, err
+	}
+	articleBytes, err := parseUint(getenv("BENCH_ARTICLE_RAW_BYTES"), "BENCH_ARTICLE_RAW_BYTES")
+	if err != nil {
+		return Config{}, err
+	}
+	if uint64(article.RawBytes) != articleBytes {
+		return Config{}, fmt.Errorf("BENCH_ARTICLE_RAW_BYTES %d does not match article profile %q", articleBytes, article.ID)
+	}
 	startupTimeout, err := parseDurationDefault(getenv("NATIVE_STARTUP_TIMEOUT"), 3*time.Minute, "NATIVE_STARTUP_TIMEOUT")
 	if err != nil {
 		return Config{}, err
@@ -122,6 +134,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		TLSValidation:    benchmark.TLSValidation(required(getenv, "BENCH_TLS_VALIDATION")),
 		ServerLink:       link,
 		StorageProfile:   storage,
+		ArticleProfile:   article,
 		FixtureDir:       required(getenv, "BENCH_FIXTURE_DIR"),
 		NZBPath:          required(getenv, "BENCH_NZB_PATH"),
 		OutputDir:        required(getenv, "BENCH_OUTPUT_DIR"),

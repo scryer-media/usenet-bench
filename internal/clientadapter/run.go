@@ -101,7 +101,7 @@ func Run(ctx context.Context, cfg Config) error {
 		}
 	}
 	result := benchmark.AdapterResult{
-		SchemaVersion:            6,
+		SchemaVersion:            7,
 		RunID:                    cfg.RunID,
 		Client:                   cfg.Client,
 		ArchiveToolchain:         cfg.ArchiveToolchain,
@@ -111,6 +111,7 @@ func Run(ctx context.Context, cfg Config) error {
 		TLSValidation:            cfg.TLSValidation,
 		TransportLabel:           cfg.TransportLabel,
 		ServerLink:               cfg.ServerLink,
+		ArticleProfile:           cfg.ArticleProfile,
 		StorageProfile:           cfg.StorageProfile,
 		QueuedAt:                 queuedAt,
 		CompletionAt:             completionAt,
@@ -131,6 +132,7 @@ func Run(ctx context.Context, cfg Config) error {
 		TLSValidation:    cfg.TLSValidation,
 		TransportLabel:   cfg.TransportLabel,
 		ServerLink:       cfg.ServerLink,
+		ArticleProfile:   cfg.ArticleProfile,
 		StorageProfile:   cfg.StorageProfile,
 	}); err != nil {
 		return fmt.Errorf("validate adapter result: %w", err)

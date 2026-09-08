@@ -42,7 +42,7 @@ func TestRARArgsAreExplicit(t *testing.T) {
 	c := ArchiveCase{
 		ID:            "case",
 		ArchiveFormat: RAR5,
-		Compression:   Normal,
+		Compression:   Best,
 		Solid:         true,
 		Encryption:    HeaderEncryption,
 		VolumeSize:    "32m",
@@ -118,7 +118,7 @@ func TestRAR4ReleaseCompressionUsesItsMaximumDictionary(t *testing.T) {
 	c := ArchiveCase{
 		ID:            "rar4-release",
 		ArchiveFormat: RAR4,
-		Compression:   Normal,
+		Compression:   Best,
 		Solid:         true,
 		Encryption:    NoEncryption,
 		VolumeSize:    "32m",
@@ -135,6 +135,33 @@ func TestRAR4ReleaseCompressionUsesItsMaximumDictionary(t *testing.T) {
 	}
 	if strings.Contains(joined, "-qo-") {
 		t.Fatalf("RAR4 args must not use RAR5-only quick-open control: %q", joined)
+	}
+}
+
+// Normal is the writer's own default level, which is what a release
+// compressed without thinking about it carries. It must not silently become
+// the maximum: the corpus has a separate lane for that, and pooling the two
+// would leave no fixture measuring ordinary compression at all.
+func TestNormalCompressionIsTheWritersDefaultLevel(t *testing.T) {
+	for _, format := range []ArchiveFormat{RAR4, RAR5} {
+		c := ArchiveCase{
+			ID:            "normal-" + string(format),
+			ArchiveFormat: format,
+			Compression:   Normal,
+			Encryption:    NoEncryption,
+			VolumeSize:    "32m",
+		}
+		args, err := c.RARArgs("archive/fixture.rar", []string{"input/one.bin"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		joined := strings.Join(args, " ")
+		if !strings.Contains(joined, "-m3") {
+			t.Errorf("%s normal args = %q, want -m3", format, joined)
+		}
+		if strings.Contains(joined, "-md") {
+			t.Errorf("%s normal args = %q, must leave the dictionary at the writer default", format, joined)
+		}
 	}
 }
 

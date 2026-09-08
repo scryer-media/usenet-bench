@@ -117,6 +117,38 @@
       "rar4-data-normal-solid-data-incompressible",
       "sevenzip-store-store-nonsolid-none-incompressible",
       "direct-mkv-200mb"
+    ],
+    "breadth-formats": [
+      "tar-store-store-nonsolid-none-incompressible",
+      "tar-gzip-gzip-nonsolid-none-compressible",
+      "tar-xz-xz-nonsolid-none-compressible",
+      "rar5-7-tarxz-store-nonsolid-none-incompressible",
+      "xz-single-xz-nonsolid-none-compressible",
+      "zip-store-store-nonsolid-none-incompressible",
+      "zip-deflate-deflate-nonsolid-none-compressible",
+      "zip-spanned-store-nonsolid-none-incompressible",
+      "zip-zipcrypto-store-nonsolid-data-incompressible",
+      "zip-7zip-deflate-deflate-nonsolid-none-compressible",
+      "zip-7zip-aes-deflate-nonsolid-data-compressible",
+      "zip-zip64-forced-store-nonsolid-none-incompressible",
+      "zip-streamed-store-nonsolid-none-incompressible",
+      "zip-zip64-large-store-nonsolid-none-incompressible",
+      "sevenzip-lzma-lzma-nonsolid-none-compressible",
+      "sevenzip-lzma2-lzma2-solid-none-compressible",
+      "sevenzip-lzma2-lzma2-nonsolid-none-compressible",
+      "sevenzip-ppmd-ppmd-nonsolid-none-compressible",
+      "sevenzip-bzip2-bzip2-nonsolid-none-compressible",
+      "sevenzip-lzma2-encrypted-lzma2-nonsolid-data-compressible",
+      "sevenzip-lzma2-encrypted-lzma2-nonsolid-headers-compressible",
+      "rar4-420-normal-normal-nonsolid-none-compressible",
+      "rar4-420-best-ppmd-best-nonsolid-none-compressible",
+      "rar4-420-best-solid-best-solid-none-compressible",
+      "rar5-7-normal-normal-nonsolid-none-compressible",
+      "rar5-7-best-best-solid-none-compressible",
+      "rar5-7-best-best-nonsolid-none-compressible",
+      "rar5-7-store-sfv-store-nonsolid-none-incompressible",
+      "media-sfv-store-nonsolid-none-incompressible",
+      "media-uuencode-store-nonsolid-none-incompressible"
     ]
   },
   "phases": [
@@ -128,6 +160,7 @@
       "artifacts": "artifacts-B3-rtt10",
       "server_link": "1gbit",
       "server_rtt": "10ms",
+      "article_size": "750k",
       "plan_spec": {
         "fixture_set": "full-corpus",
         "transports": [
@@ -170,6 +203,61 @@
       }
     },
     {
+      "name": "B3-breadth-rtt10",
+      "mode": "sequential",
+      "plan": "plan-B3-breadth-eqt-tls-local-rtt10.json",
+      "fixtures_root": "../fixtures",
+      "artifacts": "artifacts-B3-breadth-rtt10",
+      "server_link": "1gbit",
+      "server_rtt": "10ms",
+      "article_size": "750k",
+      "plan_spec": {
+        "fixture_set": "breadth-formats",
+        "transports": [
+          "tls"
+        ],
+        "profile": "equivalent-throughput",
+        "repetitions": 3,
+        "seed": 20260908
+      }
+    },
+    {
+      "name": "B3-384k-rtt10",
+      "mode": "sequential",
+      "plan": "plan-B3-eqt-tls-local-rtt10-384k.json",
+      "fixtures_root": "../fixtures-384k",
+      "artifacts": "artifacts-B3-384k-rtt10",
+      "server_link": "1gbit",
+      "server_rtt": "10ms",
+      "article_size": "384k",
+      "plan_spec": {
+        "fixture_set": "store-corpus",
+        "transports": [
+          "tls"
+        ],
+        "profile": "equivalent-throughput",
+        "repetitions": 3,
+        "seed": 20260908,
+        "exclude_clients": [
+          {
+            "client": "sabnzbd",
+            "fixture_id": "repair-rar4-store-recovery-rar-recovery-volume-light-store-nonsolid-none-incompressible",
+            "reason": "SABnzbd does not use RAR recovery volumes (.rev) and did not finish this fixture in any block of the 2026-09-05 run; recorded as did-not-finish without re-running it"
+          },
+          {
+            "client": "sabnzbd",
+            "fixture_id": "repair-rar5-store-recovery-rar-recovery-volume-heavy-store-nonsolid-none-incompressible",
+            "reason": "SABnzbd does not use RAR recovery volumes (.rev) and did not finish this fixture in any block of the 2026-09-05 run; recorded as did-not-finish without re-running it"
+          }
+        ]
+      },
+      "summarize_baselines": [
+        "sabnzbd",
+        "nzbget"
+      ],
+      "minimum_blocks": 3
+    },
+    {
       "name": "B3-bluray-rtt10",
       "mode": "sequential",
       "plan": "plan-B3-bluray-eqt-tls-local-rtt10.json",
@@ -177,6 +265,7 @@
       "artifacts": "artifacts-B3-bluray-rtt10",
       "server_link": "1gbit",
       "server_rtt": "10ms",
+      "article_size": "750k",
       "plan_spec": {
         "fixture_set": "bluray-pair",
         "transports": [
@@ -195,6 +284,7 @@
       "artifacts": "artifacts-P3-rtt10",
       "server_link": "1gbit",
       "server_rtt": "10ms",
+      "article_size": "750k",
       "plan_spec": {
         "fixture_set": "full-corpus",
         "transports": [
@@ -244,6 +334,7 @@
       "artifacts": "artifacts-C3-eqt-rtt10",
       "server_link": "1gbit",
       "server_rtt": "10ms",
+      "article_size": "750k",
       "plan_spec": {
         "fixture_set": "nfs-breadth",
         "transports": [
@@ -270,6 +361,7 @@
       "artifacts": "artifacts-A3-rtt10",
       "server_link": "1gbit",
       "server_rtt": "10ms",
+      "article_size": "750k",
       "plan_spec": {
         "fixture_set": "full-corpus",
         "transports": [
@@ -318,6 +410,7 @@
       "fixtures_root": "../fixtures",
       "artifacts": "artifacts-Q10-unthrottled",
       "server_link": "10gbit",
+      "article_size": "750k",
       "plan_spec": {
         "fixtures": [
           "direct-mkv-200mb"
@@ -339,6 +432,7 @@
       "artifacts": "artifacts-B3-rtt100",
       "server_link": "1gbit",
       "server_rtt": "100ms",
+      "article_size": "750k",
       "plan_spec": {
         "fixture_set": "store-corpus",
         "transports": [
@@ -374,6 +468,7 @@
       "artifacts": "artifacts-B3-bluray-rtt100",
       "server_link": "1gbit",
       "server_rtt": "100ms",
+      "article_size": "750k",
       "plan_spec": {
         "fixture_set": "bluray-store",
         "transports": [
@@ -397,6 +492,7 @@
       "artifacts": "artifacts-P3-rtt100",
       "server_link": "1gbit",
       "server_rtt": "100ms",
+      "article_size": "750k",
       "plan_spec": {
         "fixture_set": "store-corpus",
         "transports": [

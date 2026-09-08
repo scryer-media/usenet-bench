@@ -23,7 +23,7 @@ import (
 // FingerprintFormat versions the fingerprint input encoding. Change it
 // whenever the set of inputs or their framing changes, so images built by an
 // older harness can never be mistaken for a hit.
-const FingerprintFormat = "nntp-bench-seed-image-v1"
+const FingerprintFormat = "nntp-bench-seed-image-v2"
 
 const (
 	// Repository is the local-only image repository. Nothing here is pushed.
@@ -59,8 +59,14 @@ type Corpus struct {
 	SegmentBytes int
 	// Group is the newsgroup the corpus was posted to.
 	Group string
-	// MessageIDTemplate is the scheme the poster expanded per article.
+	// MessageIDTemplate is the scheme the yEnc poster expanded per article.
 	MessageIDTemplate string
+	// UUMessageIDTemplate is the same for the uuencode lane, which the
+	// harness posts itself because Nyuu cannot write the encoding. It is a
+	// separate input because it is a separate scheme: an image seeded by a
+	// harness that numbered uuencoded articles differently holds different
+	// articles under different ids, and must not be a cache hit.
+	UUMessageIDTemplate string
 	// BaseImage is the NNTP server image tag the articles will be baked into.
 	BaseImage string
 	// BaseImageID is that image's local content identifier. Two servers with
@@ -102,6 +108,9 @@ func (c Corpus) validate() error {
 	}
 	if strings.TrimSpace(c.MessageIDTemplate) == "" {
 		return fmt.Errorf("message id template is required")
+	}
+	if strings.TrimSpace(c.UUMessageIDTemplate) == "" {
+		return fmt.Errorf("uuencode message id template is required")
 	}
 	if strings.TrimSpace(c.BaseImage) == "" {
 		return fmt.Errorf("NNTP server base image is required")
@@ -168,6 +177,7 @@ func Compute(corpus Corpus) (Fingerprint, error) {
 	writeField(hash, "segment-bytes", []byte(fmt.Sprintf("%d", corpus.SegmentBytes)))
 	writeField(hash, "group", []byte(corpus.Group))
 	writeField(hash, "message-id-template", []byte(corpus.MessageIDTemplate))
+	writeField(hash, "uu-message-id-template", []byte(corpus.UUMessageIDTemplate))
 	writeField(hash, "nntp-image", []byte(corpus.BaseImage))
 	writeField(hash, "nntp-image-id", []byte(corpus.BaseImageID))
 	for _, id := range ids {

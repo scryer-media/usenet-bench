@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/scryer-media/usenet-bench/internal/fixture"
+	"github.com/scryer-media/usenet-bench/internal/nntp"
 )
 
 // SubmissionMode controls how a durable client handles a suite's NZBs.
@@ -102,6 +103,7 @@ type QueueAdapterResult struct {
 	TransportLabel           string            `json:"transport_label"`
 	ServerLink               ServerLinkProfile `json:"server_link"`
 	StorageProfile           StorageProfile    `json:"storage_profile"`
+	ArticleProfile           ArticleProfile    `json:"article_profile"`
 	QueueStartedAt           time.Time         `json:"queue_started_at"`
 	QueueCompletedAt         time.Time         `json:"queue_completed_at"`
 	StatusPollIntervalNanos  int64             `json:"status_poll_interval_nanoseconds"`
@@ -161,6 +163,7 @@ type QueueJobArtifact struct {
 	// that generated the corpus.
 	FixtureClass                     fixture.FixtureClass  `json:"fixture_class"`
 	Repair                           fixture.RepairDetails `json:"repair"`
+	Encoding                         fixture.PostEncoding  `json:"encoding"`
 	AdapterResult                    QueueJobResult        `json:"adapter_result"`
 	Outcome                          string                `json:"outcome"`
 	Verification                     *OutputVerification   `json:"verification,omitempty"`
@@ -346,7 +349,7 @@ func verifyQueueTransitionArtifact(suite queueSuite, result QueueAdapterResult, 
 	artifacts := make([]QueueJobArtifact, 0, len(suite.Runs))
 	for _, run := range suite.Runs {
 		job := jobsByRun[run.ID]
-		artifact := QueueJobArtifact{Run: run, FixtureClass: manifests[run.ID].Case.Class, Repair: manifests[run.ID].Repair, AdapterResult: job, Outcome: queueJobOutcome(job)}
+		artifact := QueueJobArtifact{Run: run, FixtureClass: manifests[run.ID].Case.Class, Repair: manifests[run.ID].Repair, Encoding: manifests[run.ID].Case.PostEncodingOrDefault(), AdapterResult: job, Outcome: queueJobOutcome(job)}
 		if job.TerminalStatus != "succeeded" {
 			artifact.Error = terminalFailureDescription(job)
 		}
@@ -435,7 +438,7 @@ func verifyQueueTransitionOutputs(fixtureDir, outputDir string, copies int) ([]O
 }
 
 func executeQueueSuite(parent context.Context, config RunConfig, suite queueSuite, mode SubmissionMode) (artifact QueueArtifact) {
-	artifact = QueueArtifact{SchemaVersion: 7, SuiteID: suite.ID, SubmissionMode: mode, Runs: append([]Run(nil), suite.Runs...), Status: "failed"}
+	artifact = QueueArtifact{SchemaVersion: 8, SuiteID: suite.ID, SubmissionMode: mode, Runs: append([]Run(nil), suite.Runs...), Status: "failed"}
 	suiteDir := filepath.Join(config.ArtifactRoot, suite.ID)
 	if err := os.Mkdir(suiteDir, 0o755); err != nil {
 		artifact.Error = fmt.Sprintf("create queue suite directory: %v", err)
@@ -483,6 +486,13 @@ func executeQueueSuite(parent context.Context, config RunConfig, suite queueSuit
 		}
 		nzbPath, err := fixtureNZBPath(fixtureDir, run.FixtureID)
 		if err != nil {
+			artifact.Error = err.Error()
+			return artifact
+		}
+		// Same refusal as the sequential path: a corpus seeded at a different
+		// article size than the suite declares would produce results filed
+		// under a stratum they do not belong to.
+		if err := nntp.AssertNZBArticleSize(nzbPath, manifest, run.ArticleProfile.RawBytes); err != nil {
 			artifact.Error = err.Error()
 			return artifact
 		}
@@ -619,6 +629,7 @@ func executeQueueSuite(parent context.Context, config RunConfig, suite queueSuit
 			Run:           run,
 			FixtureClass:  manifests[run.ID].Case.Class,
 			Repair:        manifests[run.ID].Repair,
+			Encoding:      manifests[run.ID].Case.PostEncodingOrDefault(),
 			AdapterResult: adapterResult,
 			Outcome:       queueJobOutcome(adapterResult),
 		}
@@ -701,11 +712,11 @@ func ObservationUncertaintyAcceptable(uncertaintyNanos, durationNanos int64) boo
 }
 
 func (r QueueAdapterResult) ValidateFor(suite queueSuite, mode SubmissionMode) error {
-	if r.SchemaVersion != 6 || r.SuiteID != suite.ID || r.SubmissionMode != mode || len(suite.Runs) == 0 {
+	if r.SchemaVersion != 7 || r.SuiteID != suite.ID || r.SubmissionMode != mode || len(suite.Runs) == 0 {
 		return fmt.Errorf("queue adapter result does not match suite %s", suite.ID)
 	}
 	first := suite.Runs[0]
-	if r.Client != first.Client || r.ArchiveToolchain != first.ArchiveToolchain || r.ExecutionTarget != first.ExecutionTarget || r.Transport != first.Transport || r.TLSValidation != first.TLSValidation || r.TransportLabel != first.TransportLabel || r.ServerLink != first.ServerLink || r.StorageProfile != first.StorageProfile {
+	if r.Client != first.Client || r.ArchiveToolchain != first.ArchiveToolchain || r.ExecutionTarget != first.ExecutionTarget || r.Transport != first.Transport || r.TLSValidation != first.TLSValidation || r.TransportLabel != first.TransportLabel || r.ServerLink != first.ServerLink || r.StorageProfile != first.StorageProfile || r.ArticleProfile != first.ArticleProfile {
 		return fmt.Errorf("queue adapter result does not match suite %s metadata", suite.ID)
 	}
 	if r.QueueStartedAt.IsZero() || r.QueueCompletedAt.IsZero() || r.QueueCompletedAt.Before(r.QueueStartedAt) {

@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "id": "uudeview-0.5.20",
+  "image": "weaver-nntp-bench-uudeview:0.5.20",
+  "platform": "linux/amd64",
+  "url": "https://deb.debian.org/debian/pool/main/u/uudeview/uudeview_0.5.20.orig.tar.gz",
+  "sha256": "a2a44fa543976775429bc65620bcca3c9b795dbfaec8183607a45f132270a414",
+  "version": "0.5.20"
+}
