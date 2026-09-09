@@ -68,7 +68,7 @@ func runSingle(ctx context.Context, cfg Config) (nativeRun, error) {
 	if err := writeProductFiles(cfg, spec); err != nil {
 		return nativeRun{}, err
 	}
-	identity, err := commandIdentity(spec.Command[0])
+	identity, toolchainIdentity, err := nativeSoftwareIdentity(cfg, spec)
 	if err != nil {
 		return nativeRun{}, err
 	}
@@ -103,13 +103,13 @@ func runSingle(ctx context.Context, cfg Config) (nativeRun, error) {
 			// different -- it was observed -- so it becomes a recorded
 			// did-not-finish instead of an adapter error.
 			waitCtx, cancelWait := context.WithTimeout(ctx, cfg.JobTimeout)
-			completion, err = api.WaitCompleteWithObservation(waitCtx, queueTiming.JobID, cfg.PollInterval, queueTiming.AcceptedAt)
+			completion, err = api.WaitCompleteWithObservation(waitCtx, queueTiming.JobID, cfg.PollInterval, queueTiming.SubmissionStartedAt)
 			var terminalFailure *clientadapter.TerminalFailureError
 			switch {
 			case errors.As(err, &terminalFailure):
 				terminalStatus, terminalError, err = "failed", terminalFailure.Error(), nil
 			case err != nil && ctx.Err() == nil && waitCtx.Err() != nil:
-				err = fmt.Errorf("client job %s did not reach a terminal state within %s of acceptance", queueTiming.JobID, cfg.JobTimeout)
+				terminalStatus, terminalError, err = "timed_out", fmt.Sprintf("client job %s did not reach a terminal state within %s of acceptance", queueTiming.JobID, cfg.JobTimeout), nil
 			}
 			cancelWait()
 		}
@@ -126,7 +126,7 @@ func runSingle(ctx context.Context, cfg Config) (nativeRun, error) {
 		RunID:                    cfg.RunID,
 		Client:                   cfg.Client,
 		ArchiveToolchain:         cfg.ArchiveToolchain,
-		ArchiveToolchainIdentity: "stock",
+		ArchiveToolchainIdentity: toolchainIdentity,
 		ExecutionTarget:          cfg.ExecutionTarget,
 		Transport:                cfg.Transport,
 		TLSValidation:            cfg.TLSValidation,
@@ -175,7 +175,7 @@ func runSequentialQueue(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("native sequential queue requires queue input")
 	}
 	jobs := make([]benchmark.QueueJobResult, 0, len(input.Jobs))
-	var clientIdentity, clientVersion, renderedConfigSHA256 string
+	var clientIdentity, clientVersion, renderedConfigSHA256, toolchainIdentity string
 	var suiteMetrics benchmark.ResourceMetrics
 	var queueStartedAt, queueCompletedAt time.Time
 	for index, inputJob := range input.Jobs {
@@ -191,12 +191,14 @@ func runSequentialQueue(ctx context.Context, cfg Config) error {
 			return fmt.Errorf("run native sequential job %s: %w", inputJob.RunID, err)
 		}
 		clientIdentity, clientVersion, renderedConfigSHA256 = nativeRun.result.ClientIdentity, nativeRun.result.ClientVersion, nativeRun.result.RenderedConfigSHA256
+		toolchainIdentity = nativeRun.result.ArchiveToolchainIdentity
 		suiteMetrics = nativeRun.result.ResourceMetrics
 		if queueStartedAt.IsZero() {
 			queueStartedAt = nativeRun.submissionStartedAt
 		}
 		queueCompletedAt = nativeRun.terminal.ObservedAt
 		job := benchmark.QueueJobResult{
+			TimingClock:                     "monotonic",
 			RunID:                           inputJob.RunID,
 			JobID:                           nativeRun.jobID,
 			SubmissionStartedAt:             nativeRun.submissionStartedAt,
@@ -221,7 +223,7 @@ func runSequentialQueue(ctx context.Context, cfg Config) error {
 		SubmissionMode:           input.SubmissionMode,
 		Client:                   cfg.Client,
 		ArchiveToolchain:         cfg.ArchiveToolchain,
-		ArchiveToolchainIdentity: "stock",
+		ArchiveToolchainIdentity: toolchainIdentity,
 		ExecutionTarget:          cfg.ExecutionTarget,
 		Transport:                cfg.Transport,
 		TLSValidation:            cfg.TLSValidation,
@@ -231,6 +233,7 @@ func runSequentialQueue(ctx context.Context, cfg Config) error {
 		StorageProfile:           cfg.StorageProfile,
 		QueueStartedAt:           queueStartedAt,
 		QueueCompletedAt:         queueCompletedAt,
+		QueueElapsedNanoseconds:  queueCompletedAt.Sub(queueStartedAt).Nanoseconds(),
 		StatusPollIntervalNanos:  cfg.PollInterval.Nanoseconds(),
 		Jobs:                     jobs,
 		ClientIdentity:           clientIdentity,
@@ -263,13 +266,13 @@ func validateNativeSequentialQueueResult(result benchmark.QueueAdapterResult) er
 		return fmt.Errorf("validate native queue resource metrics: %w", err)
 	}
 	job := result.Jobs[0]
-	if job.SubmissionStartedAt.IsZero() || job.AcceptedAt.IsZero() || !job.AcceptedAt.Equal(job.QueuedAt) || job.AcceptedAt.Before(job.SubmissionStartedAt) || !result.QueueStartedAt.Equal(job.SubmissionStartedAt) || job.TerminalObservationLowerBound.IsZero() || job.TerminalObservedAt.IsZero() || !job.TerminalObservedAt.Equal(job.CompletionAt) || job.TerminalObservationLowerBound.Before(job.QueuedAt) || job.CompletionAt.Before(job.TerminalObservationLowerBound) {
+	if job.SubmissionStartedAt.IsZero() || job.AcceptedAt.IsZero() || !job.AcceptedAt.Equal(job.QueuedAt) || job.AcceptedAt.Before(job.SubmissionStartedAt) || !result.QueueStartedAt.Equal(job.SubmissionStartedAt) || job.TerminalObservationLowerBound.IsZero() || job.TerminalObservedAt.IsZero() || !job.TerminalObservedAt.Equal(job.CompletionAt) || job.TerminalObservationLowerBound.Before(job.SubmissionStartedAt) || job.CompletionAt.Before(job.TerminalObservationLowerBound) {
 		return fmt.Errorf("native sequential result has invalid public API timing")
 	}
-	if job.FixtureWallClockNanoseconds != job.CompletionAt.Sub(job.QueuedAt).Nanoseconds() || job.SubmissionToTerminalNanoseconds != job.TerminalObservedAt.Sub(job.SubmissionStartedAt).Nanoseconds() || job.TerminalObservationUncertainty != job.TerminalObservedAt.Sub(job.TerminalObservationLowerBound).Nanoseconds() {
+	if job.TimingClock != "monotonic" && (job.FixtureWallClockNanoseconds != job.CompletionAt.Sub(job.QueuedAt).Nanoseconds() || job.SubmissionToTerminalNanoseconds != job.TerminalObservedAt.Sub(job.SubmissionStartedAt).Nanoseconds() || job.TerminalObservationUncertainty != job.TerminalObservedAt.Sub(job.TerminalObservationLowerBound).Nanoseconds()) {
 		return fmt.Errorf("native sequential result has inconsistent timing durations")
 	}
-	if job.SubmissionToTerminalNanoseconds <= 0 || !benchmark.ObservationUncertaintyAcceptable(job.TerminalObservationUncertainty, job.SubmissionToTerminalNanoseconds) {
+	if job.SubmissionToTerminalNanoseconds <= 0 || (job.TerminalStatus == "succeeded" && !benchmark.ObservationUncertaintyAcceptable(job.TerminalObservationUncertainty, job.SubmissionToTerminalNanoseconds)) {
 		return fmt.Errorf("native sequential result has terminal observation uncertainty above %s", benchmark.ObservationUncertaintyRule)
 	}
 	if job.ResourceMetrics == nil {
@@ -278,10 +281,7 @@ func validateNativeSequentialQueueResult(result benchmark.QueueAdapterResult) er
 	if err := job.ResourceMetrics.Validate(); err != nil {
 		return fmt.Errorf("validate native fixture resource metrics: %w", err)
 	}
-	// "timed_out" is not admissible here: the native lane only reaches this
-	// validator once it holds a terminal observation, and a job it gave up
-	// waiting on has none, so it is returned as an error instead.
-	if job.TerminalStatus != "succeeded" && job.TerminalStatus != "failed" {
+	if job.TerminalStatus != "succeeded" && job.TerminalStatus != "failed" && job.TerminalStatus != "timed_out" {
 		return fmt.Errorf("native sequential result has invalid terminal status %q", job.TerminalStatus)
 	}
 	if job.TerminalStatus != "succeeded" && strings.TrimSpace(job.TerminalError) == "" {
@@ -359,16 +359,25 @@ func startProcess(ctx context.Context, cfg Config, spec productSpec) (*nativePro
 	}
 	command.Stdout = logFile
 	command.Stderr = logFile
-	command.Env = append(os.Environ(), spec.Environment...)
+	command.Env = effectiveNativeEnvironment(spec)
 	configureNativeProcess(command)
+	account := newCPUAccountant()
 	if err := command.Start(); err != nil {
+		account.close()
 		_ = logFile.Close()
 		return nil, fmt.Errorf("start native %s process: %w", cfg.Client, err)
 	}
-	process := &nativeProcess{command: command, done: make(chan struct{}), cpu: newCPUAccountant()}
+	process := &nativeProcess{command: command, done: make(chan struct{}), cpu: account}
 	if err := process.cpu.attach(command.Process); err != nil {
 		process.cpu.close()
 		process.cpu = unavailableCPUAccount{reason: "native CPU accounting could not attach to the client: " + err.Error()}
+	}
+	if err := resumeAccountedProcess(command.Process); err != nil {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		process.cpu.close()
+		_ = logFile.Close()
+		return nil, err
 	}
 	go func() {
 		process.err = command.Wait()

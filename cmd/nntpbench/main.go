@@ -38,6 +38,10 @@ func main() {
 	}
 	var err error
 	switch os.Args[1] {
+	case "list":
+		err = listBenchmarks(os.Args[2:], os.Stdout)
+	case "size-pilot":
+		err = sizePilot(os.Args[2:], os.Stdout)
 	case "seed":
 		err = seed(os.Args[2:])
 	case "seed-image":
@@ -1041,6 +1045,8 @@ func usage() {
 	fmt.Fprint(os.Stderr, `usage: nntpbench <command> [options]
 
 Commands:
+  list           List human-readable fixture or chain experiment names
+  size-pilot     Recommend equal-client payload tiers from a separate sequential pilot
   seed           Post a generated fixture to an NNTP server and write its NZB
   seed-image     Cache, inspect, or restore a pre-seeded NNTP article store
   image build    Build the pinned local e2e-nntp image and save its provenance

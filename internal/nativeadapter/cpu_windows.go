@@ -13,15 +13,9 @@ import (
 	"github.com/scryer-media/usenet-bench/internal/benchmark"
 )
 
-// Windows charges user and kernel time to whichever thread is running when
-// the clock interrupt fires, so a client whose work is paced by that same
-// clock -- a shaped localhost link releases bytes on timer ticks -- runs
-// between the interrupts and is charged a fraction of what it used. On the
-// smoke fixture GetProcessTimes reported 31 ms against 1.4 billion cycles for
-// Weaver and 78 ms against 2.0 billion for NZBGet. Cycle counts are exact, so
-// the Windows lane accounts in cycles and converts at the processor's nominal
-// clock: the ratio between two clients on one host is exact whatever the
-// clock did, and the absolute value is the time at the nominal frequency.
+// Windows process CPU time is the OS-accounted user+kernel duration. It can
+// be coarse for short, timer-paced workloads. Never convert cycle counters
+// using nominal MHz: cycles and CPU time are distinct quantities.
 //
 // A process's own counter also misses what its children used, which on this
 // lane is the unpacker SABnzbd and NZBGet shell out to. The client is
@@ -31,9 +25,8 @@ import (
 // client_process_tree figure. A process the announcement reached too late to
 // hold makes the whole counter unavailable rather than a smaller number.
 type windowsCPUAccount struct {
-	job        syscall.Handle
-	port       syscall.Handle
-	nominalMHz uint64
+	job  syscall.Handle
+	port syscall.Handle
 
 	mu      sync.Mutex
 	handles map[uint32]syscall.Handle
@@ -45,7 +38,7 @@ type windowsCPUAccount struct {
 }
 
 const (
-	windowsCPUCollector = "windows-job-cycle-time"
+	windowsCPUCollector = "windows-job-process-times"
 	windowsCPUScope     = "client_process_tree"
 
 	jobObjectAssociateCompletionPortInformation = 7
@@ -79,16 +72,12 @@ type jobObjectAssociateCompletionPort struct {
 func newCPUAccountant() cpuAccountant {
 	account, err := newWindowsCPUAccount()
 	if err != nil {
-		return unavailableCPUAccount{reason: "windows job cycle accounting unavailable: " + err.Error()}
+		return unavailableCPUAccount{reason: "windows job CPU accounting unavailable: " + err.Error()}
 	}
 	return account
 }
 
 func newWindowsCPUAccount() (*windowsCPUAccount, error) {
-	nominalMHz, err := nominalProcessorMHz()
-	if err != nil {
-		return nil, err
-	}
 	job, _, callErr := procCreateJobObjectW.Call(0, 0)
 	if job == 0 {
 		return nil, fmt.Errorf("CreateJobObject: %w", callErr)
@@ -106,12 +95,11 @@ func newWindowsCPUAccount() (*windowsCPUAccount, error) {
 		return nil, fmt.Errorf("SetInformationJobObject(completion port): %w", callErr)
 	}
 	account := &windowsCPUAccount{
-		job:        syscall.Handle(job),
-		port:       port,
-		nominalMHz: nominalMHz,
-		handles:    make(map[uint32]syscall.Handle),
-		stop:       make(chan struct{}),
-		drained:    make(chan struct{}),
+		job:     syscall.Handle(job),
+		port:    port,
+		handles: make(map[uint32]syscall.Handle),
+		stop:    make(chan struct{}),
+		drained: make(chan struct{}),
 	}
 	go account.drain()
 	return account, nil
@@ -206,7 +194,7 @@ func (account *windowsCPUAccount) measurement(*os.ProcessState) benchmark.Counte
 	account.finishDraining()
 	account.mu.Lock()
 	defer account.mu.Unlock()
-	version := fmt.Sprintf("nominal-%dMHz", account.nominalMHz)
+	version := "GetProcessTimes-100ns"
 	if len(account.missed) > 0 {
 		return benchmark.UnavailableMeasurement(windowsCPUScope, windowsCPUCollector, version,
 			fmt.Sprintf("%d process(es) joined the client's job but exited before a handle could be held: pids %v", len(account.missed), account.missed))
@@ -216,19 +204,27 @@ func (account *windowsCPUAccount) measurement(*os.ProcessState) benchmark.Counte
 		pids = append(pids, int(pid))
 	}
 	sort.Ints(pids)
-	var cycles uint64
+	var ticks uint64
 	for _, pid := range pids {
 		handle := account.handles[uint32(pid)]
-		_, _ = syscall.WaitForSingleObject(handle, memberExitWaitMillis)
-		var count uint64
-		ok, _, callErr := procQueryProcessCycleTime.Call(uintptr(handle), uintptr(unsafe.Pointer(&count)))
-		if ok == 0 {
-			return benchmark.UnavailableMeasurement(windowsCPUScope, windowsCPUCollector, version,
-				fmt.Sprintf("QueryProcessCycleTime(pid %d): %v", pid, callErr))
+		state, waitErr := syscall.WaitForSingleObject(handle, memberExitWaitMillis)
+		if waitErr != nil || state != syscall.WAIT_OBJECT_0 {
+			return benchmark.UnavailableMeasurement(windowsCPUScope, windowsCPUCollector, version, "process tree did not fully exit before accounting")
 		}
-		cycles += count
+		var created, exited, kernel, user syscall.Filetime
+		if callErr := syscall.GetProcessTimes(handle, &created, &exited, &kernel, &user); callErr != nil {
+			return benchmark.UnavailableMeasurement(windowsCPUScope, windowsCPUCollector, version,
+				fmt.Sprintf("GetProcessTimes(pid %d): %v", pid, callErr))
+		}
+		for _, part := range []syscall.Filetime{kernel, user} {
+			value := uint64(part.HighDateTime)<<32 | uint64(part.LowDateTime)
+			if value > ^uint64(0)/100-ticks {
+				return benchmark.UnavailableMeasurement(windowsCPUScope, windowsCPUCollector, version, "CPU time overflow")
+			}
+			ticks += value
+		}
 	}
-	return benchmark.MeasuredMeasurement(windowsCPUScope, windowsCPUCollector, version, cycles*1000/account.nominalMHz)
+	return benchmark.MeasuredMeasurement(windowsCPUScope, windowsCPUCollector, version, ticks*100)
 }
 
 func (account *windowsCPUAccount) close() {
@@ -247,32 +243,4 @@ func (account *windowsCPUAccount) close() {
 		_ = syscall.CloseHandle(account.job)
 		account.job = 0
 	}
-}
-
-// nominalProcessorMHz is the clock the firmware reported for processor 0,
-// the same figure Task Manager labels "Base speed".
-func nominalProcessorMHz() (uint64, error) {
-	subkey, err := syscall.UTF16PtrFromString(`HARDWARE\DESCRIPTION\System\CentralProcessor\0`)
-	if err != nil {
-		return 0, err
-	}
-	var key syscall.Handle
-	if err := syscall.RegOpenKeyEx(syscall.HKEY_LOCAL_MACHINE, subkey, 0, syscall.KEY_READ, &key); err != nil {
-		return 0, fmt.Errorf("open CentralProcessor\\0: %w", err)
-	}
-	defer syscall.RegCloseKey(key)
-	name, err := syscall.UTF16PtrFromString("~MHz")
-	if err != nil {
-		return 0, err
-	}
-	var valueType uint32
-	var value uint32
-	length := uint32(unsafe.Sizeof(value))
-	if err := syscall.RegQueryValueEx(key, name, nil, &valueType, (*byte)(unsafe.Pointer(&value)), &length); err != nil {
-		return 0, fmt.Errorf("read ~MHz: %w", err)
-	}
-	if valueType != syscall.REG_DWORD || value == 0 {
-		return 0, fmt.Errorf("~MHz is not a nonzero DWORD (type %d, value %d)", valueType, value)
-	}
-	return uint64(value), nil
 }

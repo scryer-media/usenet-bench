@@ -53,6 +53,7 @@ type Config struct {
 	Connections      int
 	Profile          string
 	LaunchCommand    []string
+	IdentityPaths    []string
 	APIEndpoint      string
 	ClientVersion    string
 	WorkingDir       string
@@ -121,6 +122,15 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	var launchCommand []string
+	var identityPaths []string
+	if raw := getenv("NATIVE_IDENTITY_PATHS"); strings.TrimSpace(raw) != "" {
+		if err := json.Unmarshal([]byte(raw), &identityPaths); err != nil {
+			return Config{}, fmt.Errorf("decode NATIVE_IDENTITY_PATHS: %w", err)
+		}
+		if err := validateIdentityPaths(identityPaths); err != nil {
+			return Config{}, err
+		}
+	}
 	if err := json.Unmarshal([]byte(required(getenv, "NATIVE_LAUNCH_COMMAND")), &launchCommand); err != nil {
 		return Config{}, fmt.Errorf("decode NATIVE_LAUNCH_COMMAND JSON array: %w", err)
 	}
@@ -150,6 +160,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		Connections:      connections,
 		Profile:          required(getenv, "BENCH_PROFILE"),
 		LaunchCommand:    launchCommand,
+		IdentityPaths:    identityPaths,
 		APIEndpoint:      required(getenv, "NATIVE_API_ENDPOINT"),
 		ClientVersion:    required(getenv, "NATIVE_CLIENT_VERSION"),
 		WorkingDir:       strings.TrimSpace(getenv("NATIVE_WORKING_DIR")),
@@ -200,6 +211,9 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 }
 
 func (c Config) Validate() error {
+	if err := validateIdentityPaths(c.IdentityPaths); err != nil {
+		return err
+	}
 	if c.Client != benchmark.Weaver && c.Client != benchmark.SABnzbd && c.Client != benchmark.NZBGet {
 		return fmt.Errorf("unsupported client %q", c.Client)
 	}
@@ -345,6 +359,19 @@ func nativeAPIAddress(endpoint string) (string, int, error) {
 		return "", 0, fmt.Errorf("NATIVE_API_ENDPOINT must bind locally, got host %q", host)
 	}
 	return host, port, nil
+}
+
+func validateIdentityPaths(paths []string) error {
+	if len(paths) > 32 {
+		return fmt.Errorf("too many software identity roots")
+	}
+	for _, p := range paths {
+		p = filepath.Clean(p)
+		if !filepath.IsAbs(p) || filepath.Dir(p) == p {
+			return fmt.Errorf("software identity roots must be explicit absolute application/runtime paths")
+		}
+	}
+	return nil
 }
 
 func required(getenv func(string) string, key string) string {

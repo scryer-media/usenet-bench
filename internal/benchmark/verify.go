@@ -7,14 +7,16 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/scryer-media/usenet-bench/internal/fixture"
 	"github.com/zeebo/blake3"
 )
 
 type OutputVerification struct {
-	FixtureID string               `json:"fixture_id"`
-	Files     []VerifiedOutputFile `json:"files"`
+	FixtureID        string               `json:"fixture_id"`
+	Files            []VerifiedOutputFile `json:"files"`
+	RetainedSidecars []VerifiedOutputFile `json:"retained_sidecars,omitempty"`
 }
 
 type VerifiedOutputFile struct {
@@ -60,10 +62,62 @@ func VerifyOutput(fixtureDir, outputDir string) (OutputVerification, error) {
 		if verified == nil {
 			return OutputVerification{}, fmt.Errorf("no unused output file matching %s passed size and BLAKE3 verification", expected.Path)
 		}
+		// Nested payloads (for example disc structures) preserve their relative
+		// topology. Only a client-specific enclosing completion directory is allowed.
+		if strings.Contains(expected.Path, "/") && verified.ActualPath != expected.Path && !strings.HasSuffix(verified.ActualPath, "/"+expected.Path) {
+			return OutputVerification{}, fmt.Errorf("output %s lost required topology %s", verified.ActualPath, expected.Path)
+		}
 		used[filepath.Clean(filepath.Join(outputDir, filepath.FromSlash(verified.ActualPath)))] = true
 		result.Files = append(result.Files, *verified)
 	}
+	// A declared SFV sidecar may be removed or retained by the client. Retained
+	// copies must match the posted digest; archives and arbitrary extras never
+	// receive a filename-extension exemption.
+	allowed := allowedRetainedSidecars(manifest)
+	for _, candidate := range allCandidates {
+		if used[candidate.path] {
+			continue
+		}
+		var matched *VerifiedOutputFile
+		for _, sidecar := range allowed {
+			if filepath.Base(sidecar.Path) != filepath.Base(candidate.path) {
+				continue
+			}
+			matched, err = verifyExpectedFile(sidecar, []discoveredFile{candidate}, used, digests, outputDir)
+			if err != nil {
+				return OutputVerification{}, err
+			}
+			if matched != nil {
+				break
+			}
+		}
+		if matched == nil {
+			return OutputVerification{}, fmt.Errorf("unexpected or modified retained output: %s", candidate.path)
+		}
+		used[candidate.path] = true
+		for _, previous := range result.RetainedSidecars {
+			if previous.ExpectedPath == matched.ExpectedPath {
+				return OutputVerification{}, fmt.Errorf("duplicate retained sidecar %s", matched.ExpectedPath)
+			}
+		}
+		result.RetainedSidecars = append(result.RetainedSidecars, *matched)
+	}
 	return result, nil
+}
+
+func allowedRetainedSidecars(m fixture.GeneratedManifest) []fixture.FileDigest {
+	var allowed []fixture.FileDigest
+	for _, s := range m.Sidecars {
+		if s.Kind != fixture.SFVSidecar {
+			continue
+		}
+		for _, f := range m.ArchiveFiles {
+			if f.Path == s.Path {
+				allowed = append(allowed, f)
+			}
+		}
+	}
+	return allowed
 }
 
 func verifyExpectedFile(expected fixture.FileDigest, candidates []discoveredFile, used map[string]bool, digests map[string]string, outputDir string) (*VerifiedOutputFile, error) {
@@ -125,8 +179,11 @@ func discoverFiles(root string) (map[string][]discoveredFile, error) {
 		if err != nil {
 			return err
 		}
-		if entry.IsDir() || !entry.Type().IsRegular() {
+		if entry.IsDir() {
 			return nil
+		}
+		if !entry.Type().IsRegular() {
+			return fmt.Errorf("nonregular output: %s", path)
 		}
 		info, err := entry.Info()
 		if err != nil {

@@ -173,7 +173,8 @@ type ChainClientVersion struct {
 // ChainPhase is one measured plan run, together with the link conditions it
 // must be measured under and the summaries to produce from it.
 type ChainPhase struct {
-	Name string `json:"name"`
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name,omitempty"`
 	// Mode selects the execution command: sequential, queue or
 	// queue-transition.
 	Mode string `json:"mode"`
@@ -264,10 +265,11 @@ type ChainNFS struct {
 
 // ChainPhaseResult records what a phase did, in a form that outlives the run.
 type ChainPhaseResult struct {
-	Name       string `json:"name"`
-	Mode       string `json:"mode"`
-	ServerLink string `json:"server_link"`
-	ServerRTT  string `json:"server_rtt"`
+	DisplayName string `json:"display_name"`
+	Name        string `json:"name"`
+	Mode        string `json:"mode"`
+	ServerLink  string `json:"server_link"`
+	ServerRTT   string `json:"server_rtt"`
 	// ArticleSize is the article-size stratum the phase ran at, recorded so a
 	// session's own log says which stratum each phase belongs to without
 	// reopening its plan.
@@ -1106,7 +1108,8 @@ func sanitizeChainName(name string) string {
 // command line the log records.
 func runChainPhase(config ChainConfig, phase ChainPhase, log func(string, ...any)) ChainPhaseResult {
 	result := ChainPhaseResult{
-		Name: phase.Name, Mode: phase.Mode,
+		DisplayName: phase.displayName(),
+		Name:        phase.Name, Mode: phase.Mode,
 		ServerLink: phase.ServerLink, ServerRTT: chainRTTLabel(phase.ServerRTT),
 		ArticleSize: chainArticleSizeLabel(phase.ArticleSize),
 		Artifacts:   phase.Artifacts, StartedAt: time.Now().UTC(),
@@ -1121,7 +1124,7 @@ func runChainPhase(config ChainConfig, phase ChainPhase, log func(string, ...any
 	logPath := filepath.Join(config.LogDir, chainPhaseLogName(phase.Name))
 	result.LogPath = logPath
 	args := chainPhaseArgs(config, phase)
-	log("STARTING-%s: nntpbench %s", phase.Name, strings.Join(args, " "))
+	log("STARTING %s: nntpbench %s", phase.label(), strings.Join(args, " "))
 	code, err := runChainSelf(args, logPath)
 	result.EndedAt = time.Now().UTC()
 	result.ExitCode = code
@@ -1137,7 +1140,7 @@ func runChainPhase(config ChainConfig, phase ChainPhase, log func(string, ...any
 		result.Verdict = chainVerdictHarnessFailure
 	}
 	result.Suites = countChainSuites(phase.Artifacts)
-	log("%s-EXITED rc=%d %s suites=%d after %s", phase.Name, code, result.Verdict,
+	log("%s EXITED rc=%d %s suites=%d after %s", phase.label(), code, result.Verdict,
 		result.Suites, result.EndedAt.Sub(result.StartedAt).Round(time.Second))
 	return result
 }

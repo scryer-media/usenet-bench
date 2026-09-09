@@ -12,6 +12,7 @@ import (
 
 	"github.com/scryer-media/usenet-bench/internal/benchmark"
 	"github.com/scryer-media/usenet-bench/internal/fixture"
+	"github.com/scryer-media/usenet-bench/internal/nntp"
 )
 
 func TestBuildSummaryReportRequiresCompleteVerifiedPairs(t *testing.T) {
@@ -345,23 +346,20 @@ func TestBuildSummaryReportSkipsUnavailableCPUBlocks(t *testing.T) {
 		t.Fatal("timing summary must still pair all 20 blocks")
 	}
 	cpu := report.Comparisons[0].CPUTime
-	if cpu.PairedBlocks != 17 || cpu.Summary == nil || cpu.Summary.Count != 17 || cpu.ComparisonWithheld != "" {
-		t.Fatalf("cpu comparison should pair the 17 measured blocks: %#v", cpu)
+	if cpu.PairedBlocks != 17 || cpu.Summary != nil || !strings.Contains(cpu.ComparisonWithheld, "need at least 20") {
+		t.Fatalf("CPU interval below the planned minimum must be withheld: %#v", cpu)
 	}
 	if cpu.Accounting[1].MeasuredBlocks != 17 || cpu.Accounting[1].UnavailableBlocks != 3 || len(cpu.Accounting[1].UnavailableReasons) != 1 {
 		t.Fatalf("candidate accounting: %#v", cpu.Accounting[1])
 	}
-	// Short of the run's minimum the comparison stays, with the shortfall stated.
-	if len(cpu.Caveats) != 1 || !strings.Contains(cpu.Caveats[0], "17 paired CPU blocks is below the run's minimum of 20") {
-		t.Fatalf("cpu caveats: %#v", cpu.Caveats)
-	}
+	// Descriptive accounting remains even when there is insufficient precision.
 
 	// With a single measured pair there is nothing to summarize; that is
 	// withheld, never failed, and the timing summary is untouched.
 	for index := range artifacts {
 		if artifacts[index].Runs[0].Client == benchmark.SABnzbd && artifacts[index].Runs[0].Repetition != 20 {
-			artifacts[index].AdapterResult.Jobs[0].ResourceMetrics = nil
-			artifacts[index].Jobs[0].AdapterResult.ResourceMetrics = nil
+			artifacts[index].AdapterResult.Jobs[0].ResourceMetrics = summaryUnavailableResources()
+			artifacts[index].Jobs[0].AdapterResult.ResourceMetrics = artifacts[index].AdapterResult.Jobs[0].ResourceMetrics
 		}
 	}
 	report, err = buildSummaryReport(artifacts, nil, benchmark.Weaver, benchmark.SABnzbd, 20, 17, 1_000)
@@ -372,7 +370,7 @@ func TestBuildSummaryReportSkipsUnavailableCPUBlocks(t *testing.T) {
 		t.Fatal("timing summary must not depend on the CPU comparison")
 	}
 	cpu = report.Comparisons[0].CPUTime
-	if cpu.Summary != nil || cpu.PairedBlocks != 1 || !strings.Contains(cpu.ComparisonWithheld, "1 paired CPU blocks, need at least 2") {
+	if cpu.Summary != nil || cpu.PairedBlocks != 1 || !strings.Contains(cpu.ComparisonWithheld, "1 paired CPU blocks, need at least 20") {
 		t.Fatalf("cpu comparison with one pair was not withheld: %#v", cpu)
 	}
 }
@@ -428,8 +426,20 @@ func summaryTestFixtureArtifact(fixtureID string, class fixture.FixtureClass, cl
 		Repetition:       repetition,
 	}
 	adapterJob := benchmark.QueueJobResult{
+		TimingClock:                     "monotonic",
+		JobID:                           "job",
+		SubmissionStartedAt:             time.Unix(1700000000, 0),
+		AcceptedAt:                      time.Unix(1700000000, 0),
+		QueuedAt:                        time.Unix(1700000000, 0),
+		CompletionAt:                    time.Unix(1700000000, max(measurement, 1)),
+		TerminalObservedAt:              time.Unix(1700000000, max(measurement, 1)),
+		TerminalObservationLowerBound:   time.Unix(1700000000, max(measurement, 1)-measurement/200),
+		FixtureWallClockNanoseconds:     max(measurement, 1),
+		TerminalStatus:                  "succeeded",
+		ProcessingTimingError:           "not observed",
+		ResourceMetrics:                 summaryUnavailableResources(),
 		RunID:                           run.ID,
-		SubmissionToTerminalNanoseconds: measurement,
+		SubmissionToTerminalNanoseconds: max(measurement, 1),
 		TerminalObservationUncertainty:  measurement / 200,
 	}
 	return benchmark.QueueArtifact{
@@ -452,18 +462,45 @@ func summaryTestFixtureArtifact(fixtureID string, class fixture.FixtureClass, cl
 			ServerLink:               run.ServerLink,
 			StorageProfile:           run.StorageProfile,
 			ArticleProfile:           run.ArticleProfile,
+			QueueStartedAt:           adapterJob.SubmissionStartedAt,
+			QueueCompletedAt:         adapterJob.CompletionAt,
+			StatusPollIntervalNanos:  1,
+			ResourceMetrics:          *summaryUnavailableResources(),
 			Jobs:                     []benchmark.QueueJobResult{adapterJob},
 			ClientIdentity:           "sha256:test-" + string(run.Client),
 			ClientVersion:            "test",
 			RenderedConfigSHA256:     strings.Repeat("a", 64),
 		},
 		Jobs: []benchmark.QueueJobArtifact{{
-			Run:           run,
-			FixtureClass:  class,
-			Outcome:       "completed",
-			Verification:  &benchmark.OutputVerification{FixtureID: run.FixtureID},
-			AdapterResult: adapterJob,
+			Run:            run,
+			FixtureClass:   class,
+			Encoding:       fixture.YEncEncoding,
+			Workload:       summaryWorkload(fixtureID, class),
+			WorkloadSHA256: benchmark.EvidenceDigest(summaryWorkload(fixtureID, class)),
+			Outcome:        "completed",
+			Verification:   &benchmark.OutputVerification{FixtureID: run.FixtureID, Files: []benchmark.VerifiedOutputFile{{ExpectedPath: "payload.bin", ActualPath: "payload.bin", Size: 1, BLAKE3: strings.Repeat("a", 64)}}},
+			AdapterResult:  adapterJob,
 		}},
+	}
+}
+
+func summaryUnavailableResources() *benchmark.ResourceMetrics {
+	return &benchmark.ResourceMetrics{CPUTimeNanoseconds: benchmark.UnavailableMeasurement("client_container", "cgroup-cpu", "test", "unavailable in test"), InstructionsRetired: benchmark.UnavailableMeasurement("client_container", "perf", "test", "unavailable in test")}
+}
+
+func summaryWorkload(id string, class fixture.FixtureClass) *benchmark.WorkloadEvidence {
+	w := &benchmark.WorkloadEvidence{NZBSHA256: strings.Repeat("b", 64), Manifest: fixture.GeneratedManifest{SchemaVersion: 8, Case: fixture.ArchiveCase{ID: id, Class: class, Encoding: fixture.YEncEncoding}, ExpectedFiles: []fixture.FileDigest{{Path: "payload.bin", Size: 1, BLAKE3: strings.Repeat("a", 64)}}, ArchiveFiles: []fixture.FileDigest{{Path: "archive.bin", Size: 100 << 20, BLAKE3: strings.Repeat("b", 64)}}}}
+	setSummaryArticleEvidence(w, benchmark.DefaultArticleProfile().RawBytes)
+	return w
+}
+
+func setSummaryArticleEvidence(w *benchmark.WorkloadEvidence, rawBytes int) {
+	payload, _ := nntp.ArticlePayloadBytes(w.Manifest.Case.PostEncodingOrDefault(), rawBytes)
+	w.Articles = nntp.ArticleAttestation{SchemaVersion: 1, RawBytes: rawBytes, PayloadBytes: payload, Producer: "test-poster", ManifestSHA256: benchmark.EvidenceDigest(w.Manifest), NZBSHA256: w.NZBSHA256}
+	for _, f := range w.Manifest.PostedFiles() {
+		for number, offset := 1, int64(0); offset < f.Size; number, offset = number+1, offset+int64(payload) {
+			w.Articles.Segments = append(w.Articles.Segments, nntp.ArticleBoundary{File: filepath.Base(f.Path), Number: number, MessageID: fmt.Sprintf("%s-%d", f.Path, number), Offset: offset, RawBytes: min(int64(payload), f.Size-offset)})
+		}
 	}
 }
 
@@ -555,8 +592,8 @@ func TestBuildSummaryReportRejectsArtifactsWithoutFixtureClass(t *testing.T) {
 		t.Fatalf("summary accepted an artifact without a fixture class: %v", err)
 	}
 	artifacts[3].Jobs[0].FixtureClass = fixture.BreadthFixtureClass
-	if _, err := buildSummaryReport(artifacts, nil, benchmark.Weaver, benchmark.SABnzbd, 20, 17, 1_000); err == nil || !strings.Contains(err.Error(), "both") {
-		t.Fatalf("summary accepted one fixture recorded under two classes: %v", err)
+	if _, err := buildSummaryReport(artifacts, nil, benchmark.Weaver, benchmark.SABnzbd, 20, 17, 1_000); err == nil || !strings.Contains(err.Error(), "fixture class") {
+		t.Fatalf("summary did not reject inconsistent fixture class evidence: %v", err)
 	}
 }
 
@@ -567,8 +604,6 @@ func summaryTestDidNotFinishArtifactFor(artifact benchmark.QueueArtifact) benchm
 	artifact.Error = "1 queue job(s) did not finish"
 	artifact.AdapterResult.Jobs[0].TerminalStatus = "failed"
 	artifact.AdapterResult.Jobs[0].TerminalError = "Failed"
-	artifact.AdapterResult.Jobs[0].SubmissionToTerminalNanoseconds = 0
-	artifact.AdapterResult.Jobs[0].TerminalObservationUncertainty = 0
 	artifact.Jobs[0].AdapterResult = artifact.AdapterResult.Jobs[0]
 	artifact.Jobs[0].Outcome = "dnf"
 	artifact.Jobs[0].Verification = nil

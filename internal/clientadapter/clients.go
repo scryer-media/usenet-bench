@@ -121,15 +121,10 @@ type QueueTiming struct {
 // interval. It is intended for adapters that must preserve queue-acceptance
 // timing rather than infer it from a later poll.
 func (api *API) QueueWithTiming(ctx context.Context, nzbPath, archivePassword string) (QueueTiming, error) {
-	// Round(0) strips the monotonic reading, so a duration computed here and
-	// the same duration recomputed from these timestamps after they have been
-	// through JSON agree. They do not otherwise: darwin's wall clock is
-	// microsecond-granular while its monotonic clock is nanosecond-granular,
-	// so an in-process Sub and a post-serialization Sub differ by microseconds
-	// and every timing self-check downstream rejects the result.
-	timing := QueueTiming{SubmissionStartedAt: time.Now().Round(0)}
+	// Preserve monotonic readings until every elapsed counter has been captured.
+	timing := QueueTiming{SubmissionStartedAt: time.Now()}
 	jobID, err := api.Queue(ctx, nzbPath, archivePassword)
-	timing.AcceptedAt = time.Now().Round(0)
+	timing.AcceptedAt = time.Now()
 	if err != nil {
 		return QueueTiming{}, err
 	}
@@ -162,13 +157,14 @@ func (err *TerminalFailureError) Error() string {
 // WaitCompleteWithObservation polls the public API and retains the previous
 // confirmed non-terminal observation as the terminal lower bound. Callers can
 // therefore report uncertainty without substituting a nominal poll interval.
-func (api *API) WaitCompleteWithObservation(ctx context.Context, jobID string, interval time.Duration, acceptedAt time.Time) (TerminalObservation, error) {
-	lowerBound := acceptedAt
+func (api *API) WaitCompleteWithObservation(ctx context.Context, jobID string, interval time.Duration, submissionStartedAt time.Time) (TerminalObservation, error) {
+	lowerBound := submissionStartedAt
 	for {
+		requestStartedAt := time.Now()
 		observations, err := api.product.observe(ctx, []string{jobID})
-		observedAt := time.Now().Round(0)
+		observedAt := time.Now()
 		if err != nil {
-			return TerminalObservation{}, err
+			return TerminalObservation{LowerBound: lowerBound, ObservedAt: observedAt}, err
 		}
 		observation, found := observations[jobID]
 		if found {
@@ -182,7 +178,7 @@ func (api *API) WaitCompleteWithObservation(ctx context.Context, jobID string, i
 				// it needs to record one.
 				return TerminalObservation{LowerBound: lowerBound, ObservedAt: observedAt}, &TerminalFailureError{JobID: jobID, Status: observation.status}
 			case jobQueued, jobActive:
-				lowerBound = observedAt
+				lowerBound = requestStartedAt
 			}
 		}
 		timer := time.NewTimer(interval)
@@ -194,7 +190,7 @@ func (api *API) WaitCompleteWithObservation(ctx context.Context, jobID string, i
 				default:
 				}
 			}
-			return TerminalObservation{}, ctx.Err()
+			return TerminalObservation{LowerBound: lowerBound, ObservedAt: time.Now()}, ctx.Err()
 		case <-timer.C:
 		}
 	}

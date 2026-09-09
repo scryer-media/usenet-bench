@@ -34,11 +34,12 @@ type executionManifest struct {
 }
 
 type hostFingerprint struct {
-	Hostname  string `json:"hostname"`
-	GOOS      string `json:"goos"`
-	GOARCH    string `json:"goarch"`
-	GoVersion string `json:"go_version"`
-	NumCPU    int    `json:"logical_cpu_count"`
+	Facts     map[string]hostFact `json:"facts"`
+	Hostname  string              `json:"hostname"`
+	GOOS      string              `json:"goos"`
+	GOARCH    string              `json:"goarch"`
+	GoVersion string              `json:"go_version"`
+	NumCPU    int                 `json:"logical_cpu_count"`
 }
 
 func loadExecutionInputs(planPath, adapterPath string) (benchmark.Plan, benchmark.AdapterCatalog, []byte, []byte, error) {
@@ -133,6 +134,7 @@ func writeExecutionManifest(artifactRoot, command, planPath, adapterPath, target
 		ExecutablePath:   executable,
 		ExecutableSHA256: executableDigest,
 		Host: hostFingerprint{
+			Facts:     captureHostFacts(),
 			Hostname:  hostname,
 			GOOS:      runtime.GOOS,
 			GOARCH:    runtime.GOARCH,

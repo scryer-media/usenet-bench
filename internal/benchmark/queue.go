@@ -106,6 +106,7 @@ type QueueAdapterResult struct {
 	ArticleProfile           ArticleProfile    `json:"article_profile"`
 	QueueStartedAt           time.Time         `json:"queue_started_at"`
 	QueueCompletedAt         time.Time         `json:"queue_completed_at"`
+	QueueElapsedNanoseconds  int64             `json:"queue_elapsed_nanoseconds"`
 	StatusPollIntervalNanos  int64             `json:"status_poll_interval_nanoseconds"`
 	Jobs                     []QueueJobResult  `json:"jobs"`
 	ClientIdentity           string            `json:"client_identity"`
@@ -115,6 +116,7 @@ type QueueAdapterResult struct {
 }
 
 type QueueJobResult struct {
+	TimingClock                     string           `json:"timing_clock"`
 	RunID                           string           `json:"run_id"`
 	JobID                           string           `json:"job_id"`
 	SubmissionStartedAt             time.Time        `json:"submission_started_at"`
@@ -147,17 +149,21 @@ type QueueArtifact struct {
 	ShaperDownstreamBytes uint64              `json:"shaper_downstream_bytes,omitempty"`
 	// ShaperArticleCensus is present when the shaper counted the client's
 	// command lines (attestation schema 3).
-	ShaperArticleCensus          *ShaperArticleCensus `json:"shaper_article_census,omitempty"`
-	StorageAttestation           *StorageAttestation  `json:"storage_attestation,omitempty"`
-	Jobs                         []QueueJobArtifact   `json:"jobs,omitempty"`
-	QueueWallClockNanoseconds    int64                `json:"queue_wall_clock_nanoseconds,omitempty"`
-	VerifiedWallClockNanoseconds int64                `json:"verified_wall_clock_nanoseconds,omitempty"`
-	QueueVerifiedAt              *time.Time           `json:"queue_verified_at,omitempty"`
-	Error                        string               `json:"error,omitempty"`
+	ShaperArticleCensus            *ShaperArticleCensus `json:"shaper_article_census,omitempty"`
+	StorageAttestation             *StorageAttestation  `json:"storage_attestation,omitempty"`
+	Jobs                           []QueueJobArtifact   `json:"jobs,omitempty"`
+	QueueWallClockNanoseconds      int64                `json:"queue_wall_clock_nanoseconds,omitempty"`
+	VerifiedWallClockNanoseconds   int64                `json:"verified_wall_clock_nanoseconds,omitempty"`
+	QueueVerifiedAt                *time.Time           `json:"queue_verified_at,omitempty"`
+	VerificationElapsedNanoseconds int64                `json:"verification_elapsed_nanoseconds,omitempty"`
+	HarnessElapsedNanoseconds      int64                `json:"harness_elapsed_nanoseconds,omitempty"`
+	Error                          string               `json:"error,omitempty"`
 }
 
 type QueueJobArtifact struct {
-	Run Run `json:"run"`
+	Run            Run               `json:"run"`
+	Workload       *WorkloadEvidence `json:"workload"`
+	WorkloadSHA256 string            `json:"workload_sha256"`
 	// FixtureClass is copied from the fixture manifest so a summary can tell a
 	// headline fixture from a breadth fixture without consulting the matrix
 	// that generated the corpus.
@@ -438,6 +444,7 @@ func verifyQueueTransitionOutputs(fixtureDir, outputDir string, copies int) ([]O
 }
 
 func executeQueueSuite(parent context.Context, config RunConfig, suite queueSuite, mode SubmissionMode) (artifact QueueArtifact) {
+	harnessStarted := time.Now()
 	artifact = QueueArtifact{SchemaVersion: 8, SuiteID: suite.ID, SubmissionMode: mode, Runs: append([]Run(nil), suite.Runs...), Status: "failed"}
 	suiteDir := filepath.Join(config.ArtifactRoot, suite.ID)
 	if err := os.Mkdir(suiteDir, 0o755); err != nil {
@@ -445,6 +452,7 @@ func executeQueueSuite(parent context.Context, config RunConfig, suite queueSuit
 		return artifact
 	}
 	defer func() {
+		artifact.HarnessElapsedNanoseconds = time.Since(harnessStarted).Nanoseconds()
 		persistQueueArtifact(filepath.Join(suiteDir, "queue.json"), &artifact)
 	}()
 	outputDir := filepath.Join(suiteDir, "downloads", "complete")
@@ -472,6 +480,7 @@ func executeQueueSuite(parent context.Context, config RunConfig, suite queueSuit
 	}
 	input := QueueInput{SchemaVersion: 3, SuiteID: suite.ID, SubmissionMode: mode, Jobs: make([]QueueInputJob, 0, len(suite.Runs))}
 	manifests := make(map[string]fixture.GeneratedManifest, len(suite.Runs))
+	workloads := make(map[string]*WorkloadEvidence, len(suite.Runs))
 	fixtureDirs := make(map[string]string, len(suite.Runs))
 	for index, run := range suite.Runs {
 		fixtureDir := filepath.Join(config.FixtureRoot, run.FixtureID)
@@ -497,6 +506,11 @@ func executeQueueSuite(parent context.Context, config RunConfig, suite queueSuit
 			return artifact
 		}
 		archivePassword, err := fixtureArchivePassword(fixtureDir)
+		if err != nil {
+			artifact.Error = err.Error()
+			return artifact
+		}
+		workloads[run.ID], err = SnapshotWorkload(manifest, nzbPath)
 		if err != nil {
 			artifact.Error = err.Error()
 			return artifact
@@ -595,10 +609,16 @@ func executeQueueSuite(parent context.Context, config RunConfig, suite queueSuit
 		artifact.StorageAttestation = &attestation
 	}
 	artifact.AdapterResult = &result
-	artifact.QueueWallClockNanoseconds = result.QueueCompletedAt.Sub(result.QueueStartedAt).Nanoseconds()
+	artifact.QueueWallClockNanoseconds = result.QueueElapsedNanoseconds
 	if mode == SubmissionModeQueueDrain {
+		verificationStarted := time.Now()
 		artifact.Jobs, artifact.Error = verifyQueueTransitionArtifact(suite, result, manifests, fixtureDirs, outputDir)
+		for i := range artifact.Jobs {
+			artifact.Jobs[i].Workload = workloads[artifact.Jobs[i].Run.ID]
+			artifact.Jobs[i].WorkloadSHA256 = EvidenceDigest(artifact.Jobs[i].Workload)
+		}
 		verifiedAt := time.Now()
+		artifact.VerificationElapsedNanoseconds = time.Since(verificationStarted).Nanoseconds()
 		cleanupErr := DeleteOutputFiles(outputDir)
 		if cleanupErr != nil {
 			if artifact.Error != "" {
@@ -613,7 +633,7 @@ func executeQueueSuite(parent context.Context, config RunConfig, suite queueSuit
 			return artifact
 		}
 		artifact.QueueVerifiedAt = &verifiedAt
-		artifact.VerifiedWallClockNanoseconds = verifiedAt.Sub(result.QueueStartedAt).Nanoseconds()
+		artifact.VerifiedWallClockNanoseconds = artifact.QueueWallClockNanoseconds + artifact.VerificationElapsedNanoseconds
 		artifact.Status = "passed"
 		return artifact
 	}
@@ -626,12 +646,14 @@ func executeQueueSuite(parent context.Context, config RunConfig, suite queueSuit
 	for _, run := range suite.Runs {
 		adapterResult := jobsByRun[run.ID]
 		jobArtifact := QueueJobArtifact{
-			Run:           run,
-			FixtureClass:  manifests[run.ID].Case.Class,
-			Repair:        manifests[run.ID].Repair,
-			Encoding:      manifests[run.ID].Case.PostEncodingOrDefault(),
-			AdapterResult: adapterResult,
-			Outcome:       queueJobOutcome(adapterResult),
+			Workload:       workloads[run.ID],
+			WorkloadSHA256: EvidenceDigest(workloads[run.ID]),
+			Run:            run,
+			FixtureClass:   manifests[run.ID].Case.Class,
+			Repair:         manifests[run.ID].Repair,
+			Encoding:       manifests[run.ID].Case.PostEncodingOrDefault(),
+			AdapterResult:  adapterResult,
+			Outcome:        queueJobOutcome(adapterResult),
 		}
 		if adapterResult.TerminalStatus != "succeeded" {
 			jobArtifact.Error = terminalFailureDescription(adapterResult)
@@ -704,6 +726,9 @@ const ObservationUncertaintyRule = "1% of the submission-to-terminal duration or
 // ObservationUncertaintyAcceptable reports whether a terminal-observation
 // window of the given width is admissible for a run of the given duration.
 func ObservationUncertaintyAcceptable(uncertaintyNanos, durationNanos int64) bool {
+	if uncertaintyNanos < 0 || durationNanos <= 0 {
+		return false
+	}
 	limit := durationNanos / 100
 	if limit < ObservationUncertaintyFloorNanos {
 		limit = ObservationUncertaintyFloorNanos
@@ -740,14 +765,14 @@ func (r QueueAdapterResult) ValidateFor(suite queueSuite, mode SubmissionMode) e
 	}
 	for _, job := range r.Jobs {
 		fixtureWall := job.CompletionAt.Sub(job.QueuedAt).Nanoseconds()
-		if !expected[job.RunID] || strings.TrimSpace(job.JobID) == "" || job.QueuedAt.IsZero() || job.CompletionAt.IsZero() || job.CompletionAt.Before(job.QueuedAt) || job.QueuedAt.Before(r.QueueStartedAt) || job.CompletionAt.After(r.QueueCompletedAt) || job.FixtureWallClockNanoseconds != fixtureWall {
+		if !expected[job.RunID] || strings.TrimSpace(job.JobID) == "" || job.QueuedAt.IsZero() || job.CompletionAt.IsZero() || job.CompletionAt.Before(job.QueuedAt) || job.QueuedAt.Before(r.QueueStartedAt) || job.CompletionAt.After(r.QueueCompletedAt) || !validElapsed(job.TimingClock, job.FixtureWallClockNanoseconds, fixtureWall) {
 			return fmt.Errorf("queue adapter result for %s contains invalid job timing", suite.ID)
 		}
 		hasObservationTiming := !job.SubmissionStartedAt.IsZero() || !job.AcceptedAt.IsZero() || !job.TerminalObservationLowerBound.IsZero() || !job.TerminalObservedAt.IsZero() || job.TerminalObservationUncertainty != 0 || job.SubmissionToTerminalNanoseconds != 0
 		if hasObservationTiming {
 			terminalUncertainty := job.TerminalObservedAt.Sub(job.TerminalObservationLowerBound).Nanoseconds()
 			submissionToTerminal := job.TerminalObservedAt.Sub(job.SubmissionStartedAt).Nanoseconds()
-			if job.SubmissionStartedAt.IsZero() || job.AcceptedAt.IsZero() || job.AcceptedAt.Before(job.SubmissionStartedAt) || !job.AcceptedAt.Equal(job.QueuedAt) || job.TerminalObservationLowerBound.IsZero() || job.TerminalObservedAt.IsZero() || !job.TerminalObservedAt.Equal(job.CompletionAt) || job.TerminalObservationLowerBound.Before(job.QueuedAt) || job.TerminalObservedAt.Before(job.TerminalObservationLowerBound) || job.TerminalObservationUncertainty != terminalUncertainty || job.SubmissionToTerminalNanoseconds != submissionToTerminal {
+			if job.SubmissionStartedAt.IsZero() || job.AcceptedAt.IsZero() || job.AcceptedAt.Before(job.SubmissionStartedAt) || !job.AcceptedAt.Equal(job.QueuedAt) || job.TerminalObservationLowerBound.IsZero() || job.TerminalObservedAt.IsZero() || !job.TerminalObservedAt.Equal(job.CompletionAt) || job.TerminalObservationLowerBound.Before(job.SubmissionStartedAt) || job.TerminalObservedAt.Before(job.TerminalObservationLowerBound) || !validElapsed(job.TimingClock, job.TerminalObservationUncertainty, terminalUncertainty) || !validElapsed(job.TimingClock, job.SubmissionToTerminalNanoseconds, submissionToTerminal) || job.TerminalObservationUncertainty > job.SubmissionToTerminalNanoseconds || job.FixtureWallClockNanoseconds > job.SubmissionToTerminalNanoseconds {
 				return fmt.Errorf("queue adapter result for %s contains invalid terminal observation timing", suite.ID)
 			}
 		}
@@ -755,7 +780,7 @@ func (r QueueAdapterResult) ValidateFor(suite queueSuite, mode SubmissionMode) e
 			if !hasObservationTiming {
 				return fmt.Errorf("sequential adapter result for %s lacks terminal observation timing", suite.ID)
 			}
-			if job.SubmissionToTerminalNanoseconds <= 0 || !ObservationUncertaintyAcceptable(job.TerminalObservationUncertainty, job.SubmissionToTerminalNanoseconds) {
+			if job.SubmissionToTerminalNanoseconds <= 0 || (job.TerminalStatus == "succeeded" && !ObservationUncertaintyAcceptable(job.TerminalObservationUncertainty, job.SubmissionToTerminalNanoseconds)) {
 				return fmt.Errorf("sequential adapter result for %s has terminal observation uncertainty above %s", suite.ID, ObservationUncertaintyRule)
 			}
 		}
@@ -777,7 +802,7 @@ func (r QueueAdapterResult) ValidateFor(suite queueSuite, mode SubmissionMode) e
 		}
 		if job.ProcessingTimingAvailable {
 			processingWall := job.CompletionAt.Sub(job.ProcessingStartedAt).Nanoseconds()
-			if job.ProcessingStartedAt.IsZero() || job.ProcessingStartedAt.Before(job.QueuedAt) || job.CompletionAt.Before(job.ProcessingStartedAt) || job.ProcessingWallClockNanoseconds != processingWall || job.ProcessingTimingError != "" {
+			if job.ProcessingStartedAt.IsZero() || job.ProcessingStartedAt.Before(job.QueuedAt) || job.CompletionAt.Before(job.ProcessingStartedAt) || !validElapsed(job.TimingClock, job.ProcessingWallClockNanoseconds, processingWall) || job.ProcessingTimingError != "" {
 				return fmt.Errorf("queue adapter result for %s contains invalid active-processing timing", suite.ID)
 			}
 		} else if !job.ProcessingStartedAt.IsZero() || job.ProcessingWallClockNanoseconds != 0 || strings.TrimSpace(job.ProcessingTimingError) == "" {

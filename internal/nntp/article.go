@@ -45,17 +45,15 @@ func ExpectedSegmentCount(size int64, payloadBytes int) int64 {
 	if size <= 0 {
 		return 0
 	}
-	return (size + int64(payloadBytes) - 1) / int64(payloadBytes)
+	if payloadBytes <= 0 {
+		return 0
+	}
+	return 1 + (size-1)/int64(payloadBytes)
 }
 
-// AssertNZBArticleSize proves that a seeded NZB was posted at the article
-// size a plan or a chain phase declares. There is no separate record of the
-// seeder's -a to consult and no reason to trust one: the NZB itself says how
-// many articles each file was split into, and for a known file size that
-// pins the article size exactly. A corpus seeded at one size and run under a
-// plan declaring another is refused here, before any measurement, rather than
-// producing a result filed under the wrong stratum.
-func AssertNZBArticleSize(nzbPath string, manifest fixture.GeneratedManifest, rawBytes int) error {
+// AssertNZBSegmentCount is only a coarse consistency check: different article
+// sizes can produce the same count. Use AssertNZBArticleSize for seed provenance.
+func AssertNZBSegmentCount(nzbPath string, manifest fixture.GeneratedManifest, rawBytes int) error {
 	payloadBytes, err := ArticlePayloadBytes(manifest.Case.PostEncodingOrDefault(), rawBytes)
 	if err != nil {
 		return err
@@ -109,3 +107,5 @@ func AssertNZBArticleSize(nzbPath string, manifest fixture.GeneratedManifest, ra
 	}
 	return nil
 }
+
+func fileBase(name string) string { return path.Base(name) }

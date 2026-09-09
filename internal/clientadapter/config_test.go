@@ -365,7 +365,7 @@ func TestParseTelemetryCounters(t *testing.T) {
 	if err != nil || value != 987654 {
 		t.Fatalf("parse cgroup v1 = %d, %v", value, err)
 	}
-	instructions, err := parsePerfInstructions("123456; ;instructions;100.00;\n")
+	instructions, err := parsePerfInstructions("123456; ;instructions;1000000;100.00;\n")
 	if err != nil || instructions != 123456 {
 		t.Fatalf("parse perf instructions = %d, %v", instructions, err)
 	}

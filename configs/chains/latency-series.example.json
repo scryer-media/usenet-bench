@@ -154,6 +154,7 @@
   "phases": [
     {
       "name": "B3-rtt10",
+      "display_name": "Mixed archive downloads",
       "mode": "sequential",
       "plan": "plan-B3-eqt-tls-local-rtt10-trimmed.json",
       "fixtures_root": "../fixtures",
@@ -204,6 +205,7 @@
     },
     {
       "name": "B3-breadth-rtt10",
+      "display_name": "Additional archive formats and codecs",
       "mode": "sequential",
       "plan": "plan-B3-breadth-eqt-tls-local-rtt10.json",
       "fixtures_root": "../fixtures",
@@ -223,6 +225,7 @@
     },
     {
       "name": "B3-384k-rtt10",
+      "display_name": "Stored archive downloads with smaller articles",
       "mode": "sequential",
       "plan": "plan-B3-eqt-tls-local-rtt10-384k.json",
       "fixtures_root": "../fixtures-384k",
@@ -259,6 +262,7 @@
     },
     {
       "name": "B3-bluray-rtt10",
+      "display_name": "Blu-ray directory extraction: stored versus compressed",
       "mode": "sequential",
       "plan": "plan-B3-bluray-eqt-tls-local-rtt10.json",
       "fixtures_root": "../fixtures",
@@ -278,6 +282,7 @@
     },
     {
       "name": "P3-rtt10",
+      "display_name": "Mixed archive downloads without transport encryption",
       "mode": "sequential",
       "plan": "plan-P3-eqt-plaintext-local-rtt10-trimmed.json",
       "fixtures_root": "../fixtures",
@@ -328,6 +333,7 @@
     },
     {
       "name": "C3-eqt-rtt10",
+      "display_name": "Archive downloads to network storage",
       "mode": "sequential",
       "plan": "plan-C3-nfs-eqt-tls-nfscomplete-rtt10.json",
       "fixtures_root": "../fixtures",
@@ -355,6 +361,7 @@
     },
     {
       "name": "A3-rtt10",
+      "display_name": "Mixed archive downloads with default client settings",
       "mode": "sequential",
       "plan": "plan-A3-stock-tls-local-rtt10-trimmed.json",
       "fixtures_root": "../fixtures",
@@ -405,6 +412,7 @@
     },
     {
       "name": "Q10-unthrottled",
+      "display_name": "Ten-job queue drain and handoff",
       "mode": "queue-transition",
       "plan": "plan-Q10-eqt-tls-local-queue-10gbit-rtt0.json",
       "fixtures_root": "../fixtures",
@@ -426,6 +434,7 @@
     },
     {
       "name": "B3-rtt100",
+      "display_name": "Stored archive downloads over a high-latency link",
       "mode": "sequential",
       "plan": "plan-B3-eqt-tls-local-rtt100.json",
       "fixtures_root": "../fixtures-3",
@@ -462,6 +471,7 @@
     },
     {
       "name": "B3-bluray-rtt100",
+      "display_name": "Stored Blu-ray directory extraction over a high-latency link",
       "mode": "sequential",
       "plan": "plan-B3-bluray-eqt-tls-local-rtt100.json",
       "fixtures_root": "../fixtures-3",
@@ -486,6 +496,7 @@
     },
     {
       "name": "P3-rtt100",
+      "display_name": "Stored archive downloads without transport encryption over a high-latency link",
       "mode": "sequential",
       "plan": "plan-P3-eqt-plaintext-local-rtt100.json",
       "fixtures_root": "../fixtures-3",

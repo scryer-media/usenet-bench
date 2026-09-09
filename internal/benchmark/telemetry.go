@@ -48,6 +48,7 @@ func (c CounterValue) validate(name string) error {
 // instructions may come from different collectors and scopes, so their
 // provenance is recorded independently rather than implied by the run.
 type CounterMeasurement struct {
+	Window           string `json:"window"`
 	Scope            string `json:"scope"`
 	Collector        string `json:"collector"`
 	CollectorVersion string `json:"collector_version"`
@@ -56,6 +57,7 @@ type CounterMeasurement struct {
 
 func MeasuredMeasurement(scope, collector, collectorVersion string, value uint64) CounterMeasurement {
 	return CounterMeasurement{
+		Window:           "collector_lifetime",
 		Scope:            scope,
 		Collector:        collector,
 		CollectorVersion: collectorVersion,
@@ -65,6 +67,7 @@ func MeasuredMeasurement(scope, collector, collectorVersion string, value uint64
 
 func UnavailableMeasurement(scope, collector, collectorVersion, reason string) CounterMeasurement {
 	return CounterMeasurement{
+		Window:           "collector_lifetime",
 		Scope:            scope,
 		Collector:        collector,
 		CollectorVersion: collectorVersion,
@@ -73,6 +76,11 @@ func UnavailableMeasurement(scope, collector, collectorVersion, reason string) C
 }
 
 func (m CounterMeasurement) validate(name string) error {
+	switch m.Window {
+	case "collector_lifetime", "pre_submission_to_post_terminal", "recorder_enabled_to_post_terminal":
+	default:
+		return fmt.Errorf("%s requires an explicit supported measurement window", name)
+	}
 	switch m.Scope {
 	case "client_container", "client_process", "client_process_tree":
 	default:
