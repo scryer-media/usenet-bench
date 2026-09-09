@@ -51,3 +51,21 @@ func TestAPIURLIsAuthenticatedAndStable(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestCanonicalSABEventIgnoresDuplicateNotifierMessages(t *testing.T) {
+	tests := []struct {
+		line   string
+		marker string
+		want   bool
+	}{
+		{"::INFO::[notifier:169] Sending notification: Error - Fatal error in Assembler", assemblerFatalMarker, false},
+		{"::ERROR::[assembler:320] Fatal error in Assembler", assemblerFatalMarker, true},
+		{"::INFO::[notifier:169] Sending notification: Warning - Restarting because of crashed assembler", assemblerRestartMarker, false},
+		{"::WARNING::[__init__:595] Restarting because of crashed assembler", assemblerRestartMarker, true},
+	}
+	for _, test := range tests {
+		if got := canonicalSABEvent(test.line, test.marker); got != test.want {
+			t.Errorf("canonicalSABEvent(%q, %q) = %v, want %v", test.line, test.marker, got, test.want)
+		}
+	}
+}

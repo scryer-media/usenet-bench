@@ -47,6 +47,9 @@ func run(args []string) error {
 		fmt.Println(version)
 		return nil
 	}
+	if len(args) > 0 && args[0] == "restart-loop" {
+		return restartLoop(args[1:])
+	}
 	configDir, input, report, err := parseOneShotArgs(args)
 	if err != nil {
 		return err
