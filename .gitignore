@@ -2,3 +2,4 @@
 # gigabytes and are described by the checked-in fixture matrix and manifests.
 /generated/
 /runs/
+.DS_Store
