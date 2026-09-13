@@ -23,6 +23,7 @@ import (
 type writerToolchains struct {
 	RAR      Toolchain
 	PAR2     *PAR2Toolchain
+	PAR3     *PAR3Toolchain
 	SevenZip *SevenZipToolchain
 	GNUTools *GNUToolsToolchain
 	UUCodec  *uucodec.Toolchain

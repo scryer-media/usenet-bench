@@ -52,10 +52,15 @@ type repairInputs struct {
 	RARToolchain      Toolchain
 	PAR2Toolchain     *PAR2Toolchain
 	SevenZipToolchain *SevenZipToolchain
-	CaseDir           string
-	SourceArchives    []fixture.FileDigest
-	FirstVolume       string
-	ExpectedFiles     []fixture.FileDigest
+	PAR3Toolchain     *PAR3Toolchain
+	// Writers carries every pinned reader, for the PAR3 lanes, which verify
+	// their repaired output with the same per-format check a clean fixture
+	// passes.
+	Writers        writerToolchains
+	CaseDir        string
+	SourceArchives []fixture.FileDigest
+	FirstVolume    string
+	ExpectedFiles  []fixture.FileDigest
 }
 
 // applyRepairProfile injects the declared fault and returns the repair
@@ -118,6 +123,14 @@ func applyRepairProfile(ctx context.Context, in repairInputs) (fixture.RepairDet
 		if err := verifyPAR2Repair(ctx, in, withheld); err != nil {
 			return fixture.RepairDetails{}, nil, nil, err
 		}
+	case fixture.PAR3LightRepairProfile, fixture.PAR3HeavyWithheldProfile, fixture.PAR3FFTHeavyWithheldProfile, fixture.PAR3InsideLightProfile:
+		par3, faults, held, err := applyPAR3Profile(ctx, in)
+		if err != nil {
+			return fixture.RepairDetails{}, nil, nil, err
+		}
+		details.PAR3 = par3
+		details.Corruptions = faults
+		withheld = held
 	case fixture.RARRecoveryVolumeLightProfile, fixture.RARRecoveryVolumeHeavyProfile:
 		if archiveCase.ArchiveFormat == fixture.SevenZip {
 			return fixture.RepairDetails{}, nil, nil, fmt.Errorf("repair profile %q is a RAR container feature", profile)
@@ -234,11 +247,19 @@ func repairTargets(sources []fixture.FileDigest, count int) ([]fixture.FileDiges
 }
 
 func flipArchiveBytes(caseDir string, target fixture.FileDigest) (fixture.CorruptionDetail, error) {
+	return flipArchiveBytesAt(caseDir, target, 64<<10)
+}
+
+// flipArchiveBytesAt corrupts lightCorruptBytes starting at offset, pulled
+// back so the whole range stays inside target's recorded size.
+func flipArchiveBytesAt(caseDir string, target fixture.FileDigest, offset int64) (fixture.CorruptionDetail, error) {
 	path := filepath.Join(caseDir, filepath.FromSlash(target.Path))
 	if target.Size <= lightCorruptBytes {
 		return fixture.CorruptionDetail{}, fmt.Errorf("cannot corrupt short archive volume %s", target.Path)
 	}
-	offset := int64(64 << 10)
+	if offset < 0 {
+		offset = 0
+	}
 	if offset+lightCorruptBytes > target.Size {
 		offset = target.Size - lightCorruptBytes
 	}

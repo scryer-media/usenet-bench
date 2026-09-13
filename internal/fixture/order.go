@@ -97,7 +97,7 @@ func scatteredEnough(sorted, candidate []string) bool {
 
 func isRepairMaterial(name string) bool {
 	lowered := strings.ToLower(path.Base(name))
-	return strings.HasSuffix(lowered, ".par2") || strings.HasSuffix(lowered, ".rev")
+	return strings.HasSuffix(lowered, ".par2") || strings.HasSuffix(lowered, ".par3") || strings.HasSuffix(lowered, ".rev")
 }
 
 // shuffle is an explicit Fisher-Yates over a SplitMix64 stream. The standard

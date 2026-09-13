@@ -63,6 +63,13 @@
       "repair-sevenzip-lzma2-par2-par2-heavy-normal-solid-none-incompressible",
       "direct-mkv-200mb"
     ],
+    "par3-breadth": [
+      "repair-rar5-7-store-par3-par3-light-store-nonsolid-none-incompressible",
+      "repair-rar5-7-store-par3-par3-heavy-withheld-store-nonsolid-none-incompressible",
+      "repair-rar5-7-store-par3-headers-par3-heavy-withheld-store-nonsolid-headers-incompressible",
+      "repair-media-par3-fft-par3-fft-heavy-withheld-store-nonsolid-none-incompressible",
+      "repair-zip-store-par3-inside-par3-inside-light-store-nonsolid-none-incompressible"
+    ],
     "bluray-pair": [
       "rar5-7-bluray-store-nonsolid-none-incompressible",
       "rar5-7-bluray-normal-nonsolid-none-incompressible"
@@ -219,6 +226,28 @@
         "profile": "equivalent-throughput",
         "repetitions": 3,
         "seed": 20260908
+      }
+    },
+    {
+      "name": "B3-par3-rtt10",
+      "mode": "sequential",
+      "plan": "plan-B3-par3-eqt-tls-local-rtt10.json",
+      "fixtures_root": "../fixtures",
+      "artifacts": "artifacts-B3-par3-rtt10",
+      "server_link": "1gbit",
+      "server_rtt": "10ms",
+      "article_size": "750k",
+      "plan_spec": {
+        "fixture_set": "par3-breadth",
+        "clients": [
+          "weaver"
+        ],
+        "transports": [
+          "tls"
+        ],
+        "profile": "equivalent-throughput",
+        "repetitions": 3,
+        "seed": 20260913
       }
     },
     {

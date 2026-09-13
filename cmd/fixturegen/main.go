@@ -41,6 +41,8 @@ func main() {
 	flag.StringVar(&config.DockerfilePath, "dockerfile", "docker/rarlab/Dockerfile", "RARLAB image Dockerfile path")
 	flag.StringVar(&config.PAR2ToolchainPath, "par2-toolchain", "docker/par2/toolchain.json", "source-locked PAR2 generator JSON path")
 	flag.StringVar(&config.PAR2DockerfilePath, "par2-dockerfile", "docker/par2/Dockerfile", "PAR2 generator image Dockerfile path")
+	flag.StringVar(&config.PAR3ToolchainPath, "par3-toolchain", "docker/par3/toolchain.json", "source-locked PAR3 reference (par3cmdline) JSON path")
+	flag.StringVar(&config.PAR3DockerfilePath, "par3-dockerfile", "docker/par3/Dockerfile", "PAR3 reference image Dockerfile path")
 	flag.StringVar(&config.SevenZipToolchainPath, "sevenzip-toolchain", "docker/sevenzip/toolchain.json", "pinned 7-Zip writer JSON path")
 	flag.StringVar(&config.SevenZipDockerfilePath, "sevenzip-dockerfile", "docker/sevenzip/Dockerfile", "7-Zip writer image Dockerfile path")
 	flag.StringVar(&config.GNUToolsToolchainPath, "gnutools-toolchain", "docker/gnutools/toolchain.json", "pinned GNU tar/gzip/xz/Info-ZIP/cksfv writer JSON path")
@@ -62,7 +64,7 @@ func main() {
 	flag.BoolVar(&directMKV, "direct-mkv", false, "generate only the direct MKV fixture (no archive)")
 	flag.StringVar(&directMKVBytes, "direct-mkv-bytes", "150MiB", "payload size for --direct-mkv")
 	flag.Var(&fixtureIDs, "fixture", "one expanded fixture id to generate (repeatable; defaults to all)")
-	flag.BoolVar(&config.BuildImages, "build-images", true, "build the pinned RARLAB, PAR2, 7-Zip, GNU tools and UUDeview images before generation")
+	flag.BoolVar(&config.BuildImages, "build-images", true, "build the pinned RARLAB, PAR2, PAR3, 7-Zip, GNU tools and UUDeview images before generation")
 	flag.BoolVar(&list, "list", false, "print expanded fixture cases and exit")
 	flag.Parse()
 

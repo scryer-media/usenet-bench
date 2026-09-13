@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "id": "par3cmdline-2971702e",
+  "image": "weaver-nntp-bench-par3cmdline:2971702e",
+  "platform": "linux/amd64",
+  "url": "https://github.com/Parchive/par3cmdline/archive/2971702e501f1350b1c7b9d11369af9157d6ed56.tar.gz",
+  "sha256": "41695d424730bfa4838bada4f2750928f895ff8cf5cb6e6dc81ebe89731c6e8d",
+  "revision": "2971702e501f1350b1c7b9d11369af9157d6ed56"
+}

@@ -62,6 +62,8 @@ type Config struct {
 	DockerfilePath           string
 	PAR2ToolchainPath        string
 	PAR2DockerfilePath       string
+	PAR3ToolchainPath        string
+	PAR3DockerfilePath       string
 	SevenZipToolchainPath    string
 	SevenZipDockerfilePath   string
 	GNUToolsToolchainPath    string
@@ -99,6 +101,12 @@ func (c Config) withDefaults() Config {
 	}
 	if c.PAR2DockerfilePath == "" {
 		c.PAR2DockerfilePath = "docker/par2/Dockerfile"
+	}
+	if c.PAR3ToolchainPath == "" {
+		c.PAR3ToolchainPath = "docker/par3/toolchain.json"
+	}
+	if c.PAR3DockerfilePath == "" {
+		c.PAR3DockerfilePath = "docker/par3/Dockerfile"
 	}
 	if c.SevenZipToolchainPath == "" {
 		c.SevenZipToolchainPath = "docker/sevenzip/toolchain.json"
@@ -212,6 +220,19 @@ func Generate(ctx context.Context, config Config) ([]fixture.GeneratedManifest, 
 		}
 		par2Toolchain = &loaded
 	}
+	var par3Toolchain *PAR3Toolchain
+	if selectedCasesRequirePAR3(cases, config.CaseIDs) {
+		loaded, err := LoadPAR3Toolchain(config.PAR3ToolchainPath)
+		if err != nil {
+			return nil, err
+		}
+		if config.BuildImages {
+			if err := buildPAR3Image(ctx, config, loaded); err != nil {
+				return nil, err
+			}
+		}
+		par3Toolchain = &loaded
+	}
 	var sevenZipToolchain *SevenZipToolchain
 	if selectedCasesRequireSevenZip(cases, config.CaseIDs) {
 		loaded, err := LoadSevenZipToolchain(config.SevenZipToolchainPath)
@@ -260,6 +281,7 @@ func Generate(ctx context.Context, config Config) ([]fixture.GeneratedManifest, 
 	}
 	writers := writerToolchains{
 		PAR2:     par2Toolchain,
+		PAR3:     par3Toolchain,
 		SevenZip: sevenZipToolchain,
 		GNUTools: gnuToolsToolchain,
 		UUCodec:  uuToolchain,
@@ -457,6 +479,8 @@ func generateCase(
 		RARToolchain:      toolchain,
 		PAR2Toolchain:     writers.PAR2,
 		SevenZipToolchain: writers.SevenZip,
+		PAR3Toolchain:     writers.PAR3,
+		Writers:           writers,
 		CaseDir:           caseDir,
 		SourceArchives:    archives,
 		FirstVolume:       firstVolume,

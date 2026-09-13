@@ -150,10 +150,25 @@ type ZipStructureDetails struct {
 // input fault and repair strength reproducible without retaining duplicate
 // intact archive bytes.
 type RepairDetails struct {
-	Profile               RepairProfile      `json:"profile"`
-	PAR2RedundancyPercent int                `json:"par2_redundancy_percent,omitempty"`
-	RARRecoveryVolumes    int                `json:"rar_recovery_volumes,omitempty"`
-	Corruptions           []CorruptionDetail `json:"corruptions,omitempty"`
+	Profile               RepairProfile `json:"profile"`
+	PAR2RedundancyPercent int           `json:"par2_redundancy_percent,omitempty"`
+	RARRecoveryVolumes    int           `json:"rar_recovery_volumes,omitempty"`
+	// PAR3 records how a PAR3 profile's recovery material was written, so a
+	// timing change between releases can be told apart from a corpus change.
+	PAR3        *PAR3Details       `json:"par3,omitempty"`
+	Corruptions []CorruptionDetail `json:"corruptions,omitempty"`
+}
+
+// PAR3Details names the reference build and the exact creation parameters of
+// a PAR3 repair fixture.
+type PAR3Details struct {
+	Toolchain         ToolchainID `json:"toolchain"`
+	Code              string      `json:"code"`
+	RedundancyPercent int         `json:"redundancy_percent"`
+	// BlockSize is zero for embedded PAR3, where the reference chooses it.
+	BlockSize int64    `json:"block_size,omitempty"`
+	Embedded  bool     `json:"embedded,omitempty"`
+	Arguments []string `json:"arguments"`
 }
 
 // CorruptionDetail records a deterministic mutation or intentional omission.

@@ -126,7 +126,7 @@ lists every subcommand; `-h` on any of them prints its options.
 | `configs/server/compose-nfs.example.yml` | The throttled NFS export used by the `nfs-*` storage profiles |
 | `configs/server/compose-seeded.example.yml` | Overlay that starts the NNTP server from a pre-seeded corpus image |
 | `configs/chains/*.example.json` | Whole-session descriptions: `latency-series` on the Docker stack, `raw-native` on the raw one |
-| `docker/` | Dockerfiles for the pinned RARLAB writers, the official 7-Zip build, the GNU / Info-ZIP distribution writers, the UUDeview encoder and decoder, `par2cmdline-turbo`, Nyuu, the shaper and the throttled NFS server |
+| `docker/` | Dockerfiles for the pinned RARLAB writers, the official 7-Zip build, the GNU / Info-ZIP distribution writers, the UUDeview encoder and decoder, `par2cmdline-turbo`, the official PAR3 reference `par3cmdline`, Nyuu, the shaper and the throttled NFS server |
 | `fixtures/matrix.json`, `fixtures/corpus.json` | The declared fixture matrix and corpus description |
 | `internal/` | The Go packages behind the commands |
 
@@ -139,7 +139,7 @@ summary:
 | Class | What it stands for | Sets |
 | --- | --- | --- |
 | `headline` | The common shape of a real post: a stored (`-m0`), multi-volume RAR of already-compressed media. One clean set per source-locked RARLAB writer era (3.93, 4.20, 5.00, 6.24, 7.23), each posted clear, with encrypted headers (`-hp`) and with data-only encryption (`-p`), because most real posts are not encrypted and the encrypted forms are measured beside the clear one, never instead of it. PAR2 repair is part of the common case too: the stored form from the 4.20, 5.00 and 7.23 writers is posted in the same three forms with light damage (`par2-light`) and with an interior volume listed in the NZB but never posted (`par2-heavy-withheld`). | 8 sets, 33 fixtures |
-| `breadth` | Shapes a client meets less often and must still handle: a four-movie stored set with RAR5 quick-open records, the official 7-Zip 7z container, a stored Blu-ray-shaped topology in scattered NZB order, PAR2 over 7z, RAR recovery volumes, the container families that are not RAR (`.tar`, `.tar.gz`, `.tar.xz`, a bare `.xz`, Info-ZIP and 7-Zip zips including a spanned set, ZipCrypto and AES, zip64 and a zip written into a pipe), the 7z codec family (LZMA, LZMA2 solid and non-solid, PPMd, BZip2, data- and header-encrypted), RAR4 and RAR5 compression, `.sfv` sidecars, a raw media file posted with no container at all, and one uuencoded post. | 34 sets, 37 fixtures |
+| `breadth` | Shapes a client meets less often and must still handle: a four-movie stored set with RAR5 quick-open records, the official 7-Zip 7z container, a stored Blu-ray-shaped topology in scattered NZB order, PAR2 over 7z, RAR recovery volumes, the container families that are not RAR (`.tar`, `.tar.gz`, `.tar.xz`, a bare `.xz`, Info-ZIP and 7-Zip zips including a spanned set, ZipCrypto and AES, zip64 and a zip written into a pipe), the 7z codec family (LZMA, LZMA2 solid and non-solid, PPMd, BZip2, data- and header-encrypted), RAR4 and RAR5 compression, `.sfv` sidecars, a raw media file posted with no container at all, one uuencoded post, and five PAR3 repair lanes. | 38 sets, 42 fixtures |
 
 The summarizer pools per-fixture results only within a class (see
 [Summarize](#7-summarize)); the headline aggregate is the figure for the common
@@ -443,6 +443,10 @@ the withheld form, which is what an incomplete post looks like on a server:
 | `par2-heavy-withheld` | PAR2 at 35 % redundancy | one non-leading volume listed in the NZB but never posted |
 | `rar-recovery-volume-light` | one RAR recovery volume | one non-leading volume absent |
 | `rar-recovery-volume-heavy` | two RAR recovery volumes | two non-leading volumes absent |
+| `par3-light` | PAR3 (Cauchy) at 10 % redundancy, 1 MiB blocks | 128 deterministic byte flips in one non-leading file |
+| `par3-heavy-withheld` | PAR3 (Cauchy) at 35 % redundancy, 1 MiB blocks | one non-leading file listed in the NZB but never posted |
+| `par3-fft-heavy-withheld` | PAR3 (FFT Reed-Solomon) at 35 % redundancy, 1 MiB blocks | one non-leading file withheld and 128 byte flips in another |
+| `par3-inside-light` | PAR3 packets embedded in the zip or 7z itself at 10 % redundancy | 128 byte flips at each of three quarter points of the member data |
 
 `par2-heavy` and `par2-heavy-withheld` describe the same missing data from two
 different client viewpoints. Under `par2-heavy` the NZB never mentions the
@@ -453,6 +457,21 @@ is what an incomplete post looks like on a real server. The withheld volume's
 bytes stay on disk in the fixture so the repair target is still auditable; the
 manifest records them under `withheld_files` and the fault as
 `kind: "withheld-volume"`.
+
+Five PAR3 lanes, all breadth, cover the PAR3 flows a downloader meets first
+rather than the whole specification: `par3-light` and `par3-heavy-withheld`
+over the stored RAR5 7.23 set, the withheld lane again over encrypted headers,
+`par3-fft-heavy-withheld` over four bare media files posted in scattered order,
+and `par3-inside-light` over an Info-ZIP stored zip. The light and withheld
+recipes are the PAR2 ones, so a PAR3 lane and its PAR2 sibling differ only in
+the parity format. Neither SABnzbd nor NZBGet reads PAR3, so these lanes run in
+a weaver-only chain phase (`B3-par3-rtt10`) and are compared release over
+release, never against an oracle. PAR3 material comes from the official
+`par3cmdline` reference built from one pinned source revision; it runs inside
+the archive folder so every file is recorded by its flat posted name, and the
+manifest's `repair.par3` records the reference build and the exact creation
+arguments. The repair-then-read-back acceptance described next applies too, with `par3
+repair` (or `par3 rs` for the embedded lane, read back with 7-Zip).
 
 PAR2 material comes from the pinned `par2cmdline-turbo` 1.4.0 image. Before a
 repair fixture is accepted the generator copies its posted input aside —

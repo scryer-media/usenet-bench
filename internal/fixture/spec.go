@@ -381,15 +381,54 @@ const (
 	// looks like to a client: the file is requested and every article for it
 	// is refused, rather than the file simply never being mentioned.
 	PAR2HeavyWithheldProfile RepairProfile = "par2-heavy-withheld"
+
+	// The PAR3 profiles are written by the official par3cmdline reference.
+	// PAR3 is a large specification and the corpus deliberately covers only
+	// the shapes a downloader meets first, so that each lane is a stable
+	// release-over-release timing rather than a conformance suite.
+	//
+	// PAR3LightRepairProfile and PAR3HeavyWithheldProfile mirror their PAR2
+	// counterparts exactly — same redundancy, same block size, same fault —
+	// with Cauchy Reed-Solomon, the reference's default code, so a PAR3 lane
+	// and its PAR2 sibling over the same archive shape differ only in the
+	// parity format.
+	PAR3LightRepairProfile   RepairProfile = "par3-light"
+	PAR3HeavyWithheldProfile RepairProfile = "par3-heavy-withheld"
+	// PAR3FFTHeavyWithheldProfile uses the FFT Reed-Solomon code (Leopard)
+	// and a compound fault: one input file is withheld and a second is
+	// damaged in place, so one repair has to reconstruct a whole file and
+	// patch another from the same recovery blocks.
+	PAR3FFTHeavyWithheldProfile RepairProfile = "par3-fft-heavy-withheld"
+	// PAR3InsideLightProfile embeds the PAR3 packets inside the ZIP or 7z
+	// container itself ("PAR inside ZIP"), so the post carries no parity file
+	// at all, and damages the member data in several places.
+	PAR3InsideLightProfile RepairProfile = "par3-inside-light"
 )
 
 func (p RepairProfile) Valid() bool {
 	switch p {
-	case CleanRepairProfile, PAR2LightRepairProfile, PAR2HeavyRepairProfile, PAR2HeavyWithheldProfile, RARRecoveryVolumeLightProfile, RARRecoveryVolumeHeavyProfile:
+	case CleanRepairProfile, PAR2LightRepairProfile, PAR2HeavyRepairProfile, PAR2HeavyWithheldProfile, RARRecoveryVolumeLightProfile, RARRecoveryVolumeHeavyProfile,
+		PAR3LightRepairProfile, PAR3HeavyWithheldProfile, PAR3FFTHeavyWithheldProfile, PAR3InsideLightProfile:
 		return true
 	default:
 		return false
 	}
+}
+
+// UsesPAR3 reports whether the profile creates PAR3 recovery material, as
+// separate files or embedded in the container.
+func (p RepairProfile) UsesPAR3() bool {
+	switch p {
+	case PAR3LightRepairProfile, PAR3HeavyWithheldProfile, PAR3FFTHeavyWithheldProfile, PAR3InsideLightProfile:
+		return true
+	default:
+		return false
+	}
+}
+
+// EmbedsPAR3 reports whether the PAR3 packets live inside the container.
+func (p RepairProfile) EmbedsPAR3() bool {
+	return p == PAR3InsideLightProfile
 }
 
 // UsesPAR2 reports whether the profile posts PAR2 recovery material.
@@ -721,6 +760,9 @@ func (s FixtureSet) validate() error {
 		if s.ArchiveFormat != RAR4 && s.ArchiveFormat != RAR5 && profile.UsesRARRecoveryVolumes() {
 			return fmt.Errorf("fixture set %q cannot use repair_profile %q: RAR recovery volumes are not a %s feature", s.ID, profile, s.ArchiveFormat)
 		}
+		if err := s.validatePAR3Profile(profile); err != nil {
+			return err
+		}
 	}
 	if s.PayloadLayout == "" {
 		s.PayloadLayout = UniformPayloadLayout
@@ -786,6 +828,55 @@ func (s FixtureSet) validate() error {
 		if payload != IncompressiblePayload && payload != CompressiblePayload {
 			return fmt.Errorf("fixture set %q has unsupported payload %q", s.ID, payload)
 		}
+	}
+	return nil
+}
+
+// validatePAR3Profile refuses the PAR3 pairings the generator cannot build
+// faithfully. Embedded PAR3 needs a single, unencrypted, ordinary ZIP or 7z
+// file for the reference to insert its packets into. The separate-file
+// profiles fault a non-leading input, so a container has to be split and a
+// bare-media post has to carry enough files to leave one untouched first file
+// plus every faulted one.
+func (s FixtureSet) validatePAR3Profile(profile RepairProfile) error {
+	if !profile.UsesPAR3() {
+		return nil
+	}
+	if s.InnerArchive != NoInnerArchive {
+		return fmt.Errorf("fixture set %q cannot pair inner_archive %q with repair_profile %q", s.ID, s.InnerArchive, profile)
+	}
+	if profile.EmbedsPAR3() {
+		if s.ArchiveFormat != Zip && s.ArchiveFormat != SevenZip {
+			return fmt.Errorf("fixture set %q cannot use repair_profile %q: PAR3 packets can only be embedded in a zip or 7z container, not %s", s.ID, profile, s.ArchiveFormat)
+		}
+		if strings.TrimSpace(s.VolumeSize) != "" {
+			return fmt.Errorf("fixture set %q cannot use repair_profile %q with volume_size %q: the embedded packets protect one container file", s.ID, profile, s.VolumeSize)
+		}
+		if s.ZipStructure != ClassicZipStructure {
+			return fmt.Errorf("fixture set %q cannot use repair_profile %q with zip_structure %q", s.ID, profile, s.ZipStructure)
+		}
+		for _, encryption := range s.Encryptions {
+			if encryption != NoEncryption {
+				return fmt.Errorf("fixture set %q cannot use repair_profile %q with encryption %q", s.ID, profile, encryption)
+			}
+		}
+		return nil
+	}
+	if s.ArchiveFormat == Media {
+		needed := 2
+		if profile == PAR3HeavyWithheldProfile {
+			needed = 3
+		}
+		if profile == PAR3FFTHeavyWithheldProfile {
+			needed = 4
+		}
+		if s.FileCount < needed {
+			return fmt.Errorf("fixture set %q needs file_count of at least %d for repair_profile %q, has %d", s.ID, needed, profile, s.FileCount)
+		}
+		return nil
+	}
+	if strings.TrimSpace(s.VolumeSize) == "" {
+		return fmt.Errorf("fixture set %q must split its %s container to use repair_profile %q", s.ID, s.ArchiveFormat, profile)
 	}
 	return nil
 }
