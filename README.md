@@ -1015,9 +1015,11 @@ and NZBGet are compared at their best, with direct unpack on, rather than at
 their shipping defaults. `--profile stock` remains a valid plan for a
 diagnostic and is reported separately when it is run; neither profile is a
 fallback for the other. The profiles differ only for
-SABnzbd (`direct_unpack`) and NZBGet (`DirectUnpack`); NZBGet's `DirectWrite`
-is its shipping default and independent of direct unpack, so it stays `yes`
-in both. Weaver is rendered with `WEAVER_DIRECT_UNPACK=on` and
+SABnzbd (`direct_unpack`) and NZBGet (`DirectUnpack`, and `PostStrategy`:
+`rocket` under equivalent throughput, the shipped `balanced` under stock, so a
+queue drain never waits on NZBGet's built-in one-job-at-a-time `sequential`
+fallback); NZBGet's `DirectWrite` is its shipping default and independent of
+direct unpack, so it stays `yes` in both. Weaver is rendered with `WEAVER_DIRECT_UNPACK=on` and
 `WEAVER_CLEANUP_AFTER_EXTRACT=true` in both, because those are its shipping
 defaults and the benchmark measures the product as shipped (every client
 deletes its archive volumes after a successful unpack), so the Weaver column

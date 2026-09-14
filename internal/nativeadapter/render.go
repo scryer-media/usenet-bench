@@ -352,9 +352,19 @@ func renderNZBGet(cfg Config, directUnpack bool) productSpec {
 	}
 	// DirectWrite (writing decoded articles straight into the destination
 	// file instead of per-article temp files) is NZBGet's shipping default and
-	// is independent of direct unpack, so it stays on in both profiles; the
-	// profiles differ only in DirectUnpack.
+	// is independent of direct unpack, so it stays on in both profiles.
 	const directWrite = "yes"
+	// PostStrategy is always stated: left out, NZBGet falls back to its
+	// built-in "sequential", which post-processes one finished job at a time
+	// and is not what it ships ("balanced" in its own nzbget.conf). A queue
+	// drain then times that serial post-processing queue rather than the
+	// client. Stock keeps the shipped value; equivalent throughput uses
+	// "rocket", NZBGet's most concurrent post-processing, alongside direct
+	// unpack.
+	postStrategy := "balanced"
+	if directUnpack {
+		postStrategy = "rocket"
+	}
 	content := strings.Join([]string{
 		"MainDir=" + cfg.ConfigDir,
 		"DestDir=" + cfg.OutputDir,
@@ -371,6 +381,7 @@ func renderNZBGet(cfg Config, directUnpack bool) productSpec {
 		"OutputMode=log",
 		"DirectWrite=" + directWrite,
 		"DirectUnpack=" + direct,
+		"PostStrategy=" + postStrategy,
 		"ParCheck=auto",
 		"ParRepair=yes",
 		"Unpack=yes",

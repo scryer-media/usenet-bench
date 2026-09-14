@@ -183,6 +183,24 @@ func TestEquivalentThroughputProfileOnlyChangesDeclaredDirectUnpack(t *testing.T
 	}
 }
 
+func TestNZBGetPostStrategyIsStatedForEveryProfile(t *testing.T) {
+	cfg := testConfig(t, benchmark.NZBGet, benchmark.Plaintext, benchmark.TLSNotApplicable)
+	for profile, want := range map[string]string{
+		benchmark.ProfileStock:                "PostStrategy=balanced\n",
+		benchmark.ProfileEquivalentThroughput: "PostStrategy=rocket\n",
+	} {
+		cfg.Profile = profile
+		spec, err := cfg.RenderProductConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Unstated, NZBGet post-processes one job at a time.
+		if !strings.Contains(string(spec.ConfigContent), want) {
+			t.Fatalf("%s NZBGet config lacks %q:\n%s", profile, want, spec.ConfigContent)
+		}
+	}
+}
+
 func TestRarparVariantsRenderAnExplicitReplacementPath(t *testing.T) {
 	for _, client := range []benchmark.Client{benchmark.SABnzbd, benchmark.NZBGet} {
 		t.Run(string(client), func(t *testing.T) {

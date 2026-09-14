@@ -88,7 +88,7 @@ func TestNativeSABAndNZBGetRenderEquivalentThroughputSettings(t *testing.T) {
 			if client == benchmark.SABnzbd && !strings.Contains(content, "direct_unpack = 1") {
 				t.Fatalf("SAB config lacks direct unpack:\n%s", content)
 			}
-			if client == benchmark.NZBGet && (!strings.Contains(content, "DirectWrite=yes") || !strings.Contains(content, "DirectUnpack=yes")) {
+			if client == benchmark.NZBGet && (!strings.Contains(content, "DirectWrite=yes") || !strings.Contains(content, "DirectUnpack=yes") || !strings.Contains(content, "PostStrategy=rocket")) {
 				t.Fatalf("NZBGet config lacks direct settings:\n%s", content)
 			}
 		})
