@@ -95,6 +95,16 @@ func TestNativeSABAndNZBGetRenderEquivalentThroughputSettings(t *testing.T) {
 	}
 }
 
+func TestNativeNZBGetDeletesArchivesAfterUnpack(t *testing.T) {
+	spec, err := renderProduct(testConfig(benchmark.NZBGet))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(spec.Content), "UnpackCleanupDisk=yes\n") {
+		t.Fatalf("NZBGet config keeps archives after unpack:\n%s", spec.Content)
+	}
+}
+
 func TestNativeNZBGetVerifiedTLSEnablesCAValidation(t *testing.T) {
 	cfg := testConfig(benchmark.NZBGet)
 	cfg.Transport = benchmark.TLS

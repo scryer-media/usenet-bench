@@ -20,6 +20,9 @@ type OutputVerification struct {
 	FixtureID        string               `json:"fixture_id"`
 	Files            []VerifiedOutputFile `json:"files"`
 	RetainedSidecars []VerifiedOutputFile `json:"retained_sidecars,omitempty"`
+	// ClientBookkeeping lists the files a client is known to leave in its own
+	// completion directory for itself, which were checked and set aside.
+	ClientBookkeeping []string `json:"client_bookkeeping,omitempty"`
 	// Reference says what an external fixture's output was checked against:
 	// "pinned" when it matched output an earlier run pinned, "pinned-here"
 	// when this run was the first to finish and pinned its own. It is empty
@@ -52,6 +55,15 @@ type VerifiedOutputFile struct {
 // expected member, so a flattened-name collision remains a verification
 // failure rather than being hidden by content matching.
 func VerifyOutput(fixtureDir, outputDir string) (OutputVerification, error) {
+	return VerifyClientOutput(fixtureDir, outputDir, "")
+}
+
+// VerifyClientOutput is VerifyOutput for output a named client produced. The
+// only difference is that the client's own bookkeeping files, which it writes
+// into every completion directory by design, are checked for their exact form
+// and set aside instead of failing the run as unexpected output. Anything else
+// left behind still fails it.
+func VerifyClientOutput(fixtureDir, outputDir string, client Client) (OutputVerification, error) {
 	manifest, err := fixture.LoadGeneratedManifest(filepath.Join(fixtureDir, "fixture-manifest.json"))
 	if err != nil {
 		return OutputVerification{}, err
@@ -110,6 +122,19 @@ func VerifyOutput(fixtureDir, outputDir string) (OutputVerification, error) {
 	allowed := allowedRetainedSidecars(manifest)
 	for _, candidate := range allCandidates {
 		if used[candidate.path] {
+			continue
+		}
+		bookkeeping, err := isClientBookkeeping(client, outputDir, candidate)
+		if err != nil {
+			return OutputVerification{}, err
+		}
+		if bookkeeping {
+			used[candidate.path] = true
+			relative, err := filepath.Rel(outputDir, candidate.path)
+			if err != nil {
+				return OutputVerification{}, err
+			}
+			result.ClientBookkeeping = append(result.ClientBookkeeping, filepath.ToSlash(relative))
 			continue
 		}
 		var matched *VerifiedOutputFile
@@ -230,6 +255,55 @@ func pinOutput(fixtureDir, outputDir string, manifest fixture.GeneratedManifest,
 		return OutputVerification{}, fmt.Errorf("pin the output of %s: %w", manifest.Case.ID, err)
 	}
 	return result, nil
+}
+
+// weaverOutputMarker is the file Weaver writes into each job's completion
+// directory to recognise the directory as its own on a later restart. Its
+// content is "weaver-output-v1:" and the hex BLAKE3 of the directory's
+// canonical path as Weaver saw it, then a newline. That path is the client's
+// view (inside a container, for instance), so the harness checks the form and
+// not the digest.
+const (
+	weaverOutputMarker       = ".weaver-output-dir"
+	weaverOutputMarkerPrefix = "weaver-output-v1:"
+)
+
+// isClientBookkeeping reports whether an otherwise unexpected output file is a
+// known client bookkeeping file in its exact form: Weaver's output marker, from
+// a Weaver run, in the output root or a job directory directly beneath it.
+func isClientBookkeeping(client Client, outputDir string, candidate discoveredFile) (bool, error) {
+	if client != Weaver || filepath.Base(candidate.path) != weaverOutputMarker {
+		return false, nil
+	}
+	parent, err := filepath.Rel(outputDir, filepath.Dir(candidate.path))
+	if err != nil {
+		return false, err
+	}
+	if parent != "." && strings.ContainsRune(filepath.ToSlash(parent), '/') {
+		return false, nil
+	}
+	wantSize := int64(len(weaverOutputMarkerPrefix) + 64 + 1)
+	if candidate.size != wantSize {
+		return false, nil
+	}
+	contents, err := os.ReadFile(candidate.path)
+	if err != nil {
+		return false, err
+	}
+	text := string(contents)
+	if !strings.HasPrefix(text, weaverOutputMarkerPrefix) || !strings.HasSuffix(text, "\n") {
+		return false, nil
+	}
+	digest := strings.TrimSuffix(strings.TrimPrefix(text, weaverOutputMarkerPrefix), "\n")
+	if len(digest) != 64 {
+		return false, nil
+	}
+	for _, r := range digest {
+		if !strings.ContainsRune("0123456789abcdef", r) {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func allowedRetainedSidecars(m fixture.GeneratedManifest) []fixture.FileDigest {

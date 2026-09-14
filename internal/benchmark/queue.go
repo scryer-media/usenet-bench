@@ -668,7 +668,7 @@ func executeQueueSuite(parent context.Context, config RunConfig, suite queueSuit
 			continue
 		}
 		verificationStartedAt := time.Now()
-		verification, err := store.Verify(parent, fixtureDirs[run.ID])
+		verification, err := store.Verify(parent, fixtureDirs[run.ID], run.Client)
 		jobArtifact.VerificationWallClockNanoseconds = time.Since(verificationStartedAt).Nanoseconds()
 		if err != nil {
 			jobArtifact.Outcome = "dnf"

@@ -201,6 +201,20 @@ func TestNZBGetPostStrategyIsStatedForEveryProfile(t *testing.T) {
 	}
 }
 
+func TestNZBGetDeletesArchivesAfterUnpackForEveryProfile(t *testing.T) {
+	cfg := testConfig(t, benchmark.NZBGet, benchmark.Plaintext, benchmark.TLSNotApplicable)
+	for _, profile := range []string{benchmark.ProfileStock, benchmark.ProfileEquivalentThroughput} {
+		cfg.Profile = profile
+		spec, err := cfg.RenderProductConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(spec.ConfigContent), "UnpackCleanupDisk=yes\n") {
+			t.Fatalf("%s NZBGet config keeps archives after unpack:\n%s", profile, spec.ConfigContent)
+		}
+	}
+}
+
 func TestRarparVariantsRenderAnExplicitReplacementPath(t *testing.T) {
 	for _, client := range []benchmark.Client{benchmark.SABnzbd, benchmark.NZBGet} {
 		t.Run(string(client), func(t *testing.T) {

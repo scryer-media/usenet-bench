@@ -918,16 +918,17 @@ func importNZB(args []string) error {
 func verifyOutput(args []string) error {
 	flags := flag.NewFlagSet("verify-output", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
-	var fixtureDir, outputDir string
+	var fixtureDir, outputDir, client string
 	flags.StringVar(&fixtureDir, "fixture-dir", "", "generated fixture directory")
 	flags.StringVar(&outputDir, "output-dir", "", "client completion directory")
+	flags.StringVar(&client, "client", "", "client that produced the output; its own bookkeeping files are set aside")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if fixtureDir == "" || outputDir == "" {
 		return fmt.Errorf("--fixture-dir and --output-dir are required")
 	}
-	result, err := benchmark.VerifyOutput(fixtureDir, outputDir)
+	result, err := benchmark.VerifyClientOutput(fixtureDir, outputDir, benchmark.Client(client))
 	if err != nil {
 		return err
 	}

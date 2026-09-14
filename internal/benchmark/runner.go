@@ -489,7 +489,7 @@ func executeRun(parent context.Context, config RunConfig, run Run) (artifact Run
 	artifact.AdapterResult = &result
 	artifact.WallClockNanoseconds = result.CompletionAt.Sub(result.QueuedAt).Nanoseconds()
 	verificationStartedAt := time.Now()
-	verification, err := store.Verify(parent, fixtureDir)
+	verification, err := store.Verify(parent, fixtureDir, run.Client)
 	artifact.VerificationWallClockNanoseconds = time.Since(verificationStartedAt).Nanoseconds()
 	if err != nil {
 		artifact.Error = err.Error()

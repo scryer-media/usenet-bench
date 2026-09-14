@@ -67,8 +67,9 @@ type StorageSession struct {
 type OutputStore interface {
 	// Environment contributes adapter environment describing the store.
 	Environment() []string
-	// Verify runs the harness's own BLAKE3 verification over the output.
-	Verify(ctx context.Context, fixtureDir string) (OutputVerification, error)
+	// Verify runs the harness's own BLAKE3 verification over the output the
+	// named client produced.
+	Verify(ctx context.Context, fixtureDir string, client Client) (OutputVerification, error)
 	// Delete removes the verified output, retaining the output root.
 	Delete(ctx context.Context) error
 }
@@ -81,8 +82,8 @@ func (s localOutputStore) Environment() []string {
 	return []string{"BENCH_STORAGE_COMPLETE_VOLUME=", "BENCH_STORAGE_INCOMPLETE_VOLUME="}
 }
 
-func (s localOutputStore) Verify(_ context.Context, fixtureDir string) (OutputVerification, error) {
-	return VerifyOutput(fixtureDir, s.outputDir)
+func (s localOutputStore) Verify(_ context.Context, fixtureDir string, client Client) (OutputVerification, error) {
+	return VerifyClientOutput(fixtureDir, s.outputDir, client)
 }
 
 func (s localOutputStore) Delete(_ context.Context) error {
@@ -382,13 +383,14 @@ func (s *StorageSession) Environment() []string {
 // Verify runs the harness's own verifier against the export from inside a
 // helper container attached to the server's export volume. It is charged to no
 // product: callers time it separately, exactly as they time local verification.
-func (s *StorageSession) Verify(ctx context.Context, fixtureDir string) (OutputVerification, error) {
+func (s *StorageSession) Verify(ctx context.Context, fixtureDir string, client Client) (OutputVerification, error) {
 	output, err := s.helperServerSideRun(ctx, false,
 		[]string{"type=bind,src=" + fixtureDir + ",dst=" + storageHelperFixturePath + ",readonly"},
 		[]string{
 			"verify-output",
 			"--fixture-dir", storageHelperFixturePath,
 			"--output-dir", s.serverSideCompleteDir(),
+			"--client", string(client),
 		})
 	if err != nil {
 		return OutputVerification{}, err

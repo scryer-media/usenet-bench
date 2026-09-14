@@ -206,7 +206,7 @@ func TestStorageSessionLifecycleIsSelfCleaning(t *testing.T) {
 	}
 
 	server.movedBytes = true
-	verification, err := session.Verify(context.Background(), "/fixtures/fixture-a")
+	verification, err := session.Verify(context.Background(), "/fixtures/fixture-a", Weaver)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,6 +228,9 @@ func TestStorageSessionLifecycleIsSelfCleaning(t *testing.T) {
 	}
 	if strings.Contains(verifyCall, "type=volume,src=nntpbench-run-0001-complete-") {
 		t.Fatalf("verification must not pull the output back over the shaped NFS mount: %s", verifyCall)
+	}
+	if !strings.Contains(verifyCall, "--client weaver") {
+		t.Fatalf("verification must name the client whose output it checks: %s", verifyCall)
 	}
 	if strings.Contains(verifyCall, "--network") {
 		t.Fatalf("server-side verification needs no benchmark network: %s", verifyCall)
