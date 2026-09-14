@@ -86,7 +86,7 @@ func applyRepairProfile(ctx context.Context, in repairInputs) (fixture.RepairDet
 			return fixture.RepairDetails{}, nil, nil, fmt.Errorf("PAR2 repair fixture requires a PAR2 toolchain")
 		}
 		redundancy, missingVolumes := par2RepairParameters(profile)
-		if err := createPAR2(ctx, config.DockerBinary, *in.PAR2Toolchain, caseDir, in.SourceArchives, redundancy); err != nil {
+		if err := createPAR2(ctx, config.DockerBinary, *in.PAR2Toolchain, caseDir, in.SourceArchives, redundancy, par2BlockSize); err != nil {
 			return fixture.RepairDetails{}, nil, nil, err
 		}
 		details.PAR2RedundancyPercent = redundancy
@@ -120,10 +120,28 @@ func applyRepairProfile(ctx context.Context, in repairInputs) (fixture.RepairDet
 				details.Corruptions = faults
 			}
 		}
-		if err := verifyPAR2Repair(ctx, in, withheld); err != nil {
+		if err := verifyPAR2Repair(ctx, in, withheld, nil); err != nil {
 			return fixture.RepairDetails{}, nil, nil, err
 		}
-	case fixture.PAR3LightRepairProfile, fixture.PAR3HeavyWithheldProfile, fixture.PAR3FFTHeavyWithheldProfile, fixture.PAR3InsideLightProfile:
+	case fixture.PAR2ScatteredLightProfile, fixture.PAR2ScatteredHeavyProfile:
+		if in.PAR2Toolchain == nil {
+			return fixture.RepairDetails{}, nil, nil, fmt.Errorf("PAR2 repair fixture requires a PAR2 toolchain")
+		}
+		perMille, redundancy, _ := profile.ScatteredDamage()
+		if err := createPAR2(ctx, config.DockerBinary, *in.PAR2Toolchain, caseDir, in.SourceArchives, redundancy, fixture.ScatteredArticleBytes); err != nil {
+			return fixture.RepairDetails{}, nil, nil, err
+		}
+		faults, err := scatteredArticles(in.SourceArchives, archiveCase.SetID, perMille)
+		if err != nil {
+			return fixture.RepairDetails{}, nil, nil, err
+		}
+		details.PAR2RedundancyPercent = redundancy
+		details.Corruptions = faults
+		if err := verifyPAR2Repair(ctx, in, nil, faults); err != nil {
+			return fixture.RepairDetails{}, nil, nil, err
+		}
+	case fixture.PAR3LightRepairProfile, fixture.PAR3HeavyWithheldProfile, fixture.PAR3FFTHeavyWithheldProfile, fixture.PAR3InsideLightProfile,
+		fixture.PAR3FFTScatteredLightProfile, fixture.PAR3FFTScatteredHeavyProfile, fixture.PAR3FFTPastPAR2CapProfile:
 		par3, faults, held, err := applyPAR3Profile(ctx, in)
 		if err != nil {
 			return fixture.RepairDetails{}, nil, nil, err
@@ -206,9 +224,9 @@ func excludeWithheld(posted, withheld []fixture.FileDigest) []fixture.FileDigest
 	return kept
 }
 
-func createPAR2(ctx context.Context, dockerBinary string, toolchain PAR2Toolchain, caseDir string, sources []fixture.FileDigest, redundancy int) error {
+func createPAR2(ctx context.Context, dockerBinary string, toolchain PAR2Toolchain, caseDir string, sources []fixture.FileDigest, redundancy int, blockSize int64) error {
 	args := []string{
-		"create", "-q", fmt.Sprintf("-r%d", redundancy), fmt.Sprintf("-s%d", par2BlockSize),
+		"create", "-q", fmt.Sprintf("-r%d", redundancy), fmt.Sprintf("-s%d", blockSize),
 		"archive/fixture.par2",
 	}
 	for _, source := range sources {
@@ -313,12 +331,15 @@ func withholdArchiveFiles(caseDir string, targets []fixture.FileDigest) ([]fixtu
 	return faults, withheld, nil
 }
 
-func verifyPAR2Repair(ctx context.Context, in repairInputs, withheld []fixture.FileDigest) error {
+func verifyPAR2Repair(ctx context.Context, in repairInputs, withheld []fixture.FileDigest, articles []fixture.CorruptionDetail) error {
 	verifyDir, err := copyArchiveForRepairVerification(in.CaseDir, withheld)
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(verifyDir)
+	if err := blankWithheldArticles(verifyDir, articles); err != nil {
+		return err
+	}
 	if err := runPAR2(ctx, in.Config.DockerBinary, *in.PAR2Toolchain, verifyDir, "repair", "-q", "archive/fixture.par2"); err != nil {
 		return fmt.Errorf("PAR2 repair verification: %w", err)
 	}

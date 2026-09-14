@@ -139,7 +139,7 @@ summary:
 | Class | What it stands for | Sets |
 | --- | --- | --- |
 | `headline` | The common shape of a real post: a stored (`-m0`), multi-volume RAR of already-compressed media. One clean set per source-locked RARLAB writer era (3.93, 4.20, 5.00, 6.24, 7.23), each posted clear, with encrypted headers (`-hp`) and with data-only encryption (`-p`), because most real posts are not encrypted and the encrypted forms are measured beside the clear one, never instead of it. PAR2 repair is part of the common case too: the stored form from the 4.20, 5.00 and 7.23 writers is posted in the same three forms with light damage (`par2-light`) and with an interior volume listed in the NZB but never posted (`par2-heavy-withheld`). | 8 sets, 33 fixtures |
-| `breadth` | Shapes a client meets less often and must still handle: a four-movie stored set with RAR5 quick-open records, the official 7-Zip 7z container, a stored Blu-ray-shaped topology in scattered NZB order, PAR2 over 7z, RAR recovery volumes, the container families that are not RAR (`.tar`, `.tar.gz`, `.tar.xz`, a bare `.xz`, Info-ZIP and 7-Zip zips including a spanned set, ZipCrypto and AES, zip64 and a zip written into a pipe), the 7z codec family (LZMA, LZMA2 solid and non-solid, PPMd, BZip2, data- and header-encrypted), RAR4 and RAR5 compression, `.sfv` sidecars, a raw media file posted with no container at all, one uuencoded post, and five PAR3 repair lanes. | 38 sets, 42 fixtures |
+| `breadth` | Shapes a client meets less often and must still handle: a four-movie stored set with RAR5 quick-open records, the official 7-Zip 7z container, a stored Blu-ray-shaped topology in scattered NZB order, PAR2 over 7z, RAR recovery volumes, the container families that are not RAR (`.tar`, `.tar.gz`, `.tar.xz`, a bare `.xz`, Info-ZIP and 7-Zip zips including a spanned set, ZipCrypto and AES, zip64 and a zip written into a pipe), the 7z codec family (LZMA, LZMA2 solid and non-solid, PPMd, BZip2, data- and header-encrypted), RAR4 and RAR5 compression, `.sfv` sidecars, a raw media file posted with no container at all, one uuencoded post, five PAR3 repair lanes, and paired PAR2 and PAR3 lanes over scattered article loss. | 39 sets, 46 fixtures |
 
 The summarizer pools per-fixture results only within a class (see
 [Summarize](#7-summarize)); the headline aggregate is the figure for the common
@@ -447,6 +447,11 @@ the withheld form, which is what an incomplete post looks like on a server:
 | `par3-heavy-withheld` | PAR3 (Cauchy) at 35 % redundancy, 1 MiB blocks | one non-leading file listed in the NZB but never posted |
 | `par3-fft-heavy-withheld` | PAR3 (FFT Reed-Solomon) at 35 % redundancy, 1 MiB blocks | one non-leading file withheld and 128 byte flips in another |
 | `par3-inside-light` | PAR3 packets embedded in the zip or 7z itself at 10 % redundancy | 128 byte flips at each of three quarter points of the member data |
+| `par2-scattered-light` | PAR2 at 5 % redundancy, one 750 KiB block per article | 1 % of the articles, spread evenly, listed in the NZB but never posted |
+| `par2-scattered-heavy` | PAR2 at 10 % redundancy, one 750 KiB block per article | 7 % of the articles, spread evenly, listed but never posted |
+| `par3-fft-scattered-light` | PAR3 (FFT Reed-Solomon) at 5 % redundancy, one 750 KiB block per article | the same articles as `par2-scattered-light` |
+| `par3-fft-scattered-heavy` | PAR3 (FFT Reed-Solomon) at 10 % redundancy, one 750 KiB block per article | the same articles as `par2-scattered-heavy` |
+| `par3-fft-past-par2-cap` | PAR3 (FFT Reed-Solomon, two interleaved cohorts) at 10 % redundancy, one 750 KiB block per article, over a post with more articles than PAR2's 32,768-block limit | 7 % of the articles, spread evenly, listed but never posted |
 
 `par2-heavy` and `par2-heavy-withheld` describe the same missing data from two
 different client viewpoints. Under `par2-heavy` the NZB never mentions the
@@ -464,9 +469,52 @@ over the stored RAR5 7.23 set, the withheld lane again over encrypted headers,
 `par3-fft-heavy-withheld` over four bare media files posted in scattered order,
 and `par3-inside-light` over an Info-ZIP stored zip. The light and withheld
 recipes are the PAR2 ones, so a PAR3 lane and its PAR2 sibling differ only in
-the parity format. Neither SABnzbd nor NZBGet reads PAR3, so these lanes run in
-a weaver-only chain phase (`B3-par3-rtt10`) and are compared release over
-release, never against an oracle. PAR3 material comes from the official
+the parity format. Neither SABnzbd nor NZBGet reads PAR3, so these lanes are
+compared release over release, never against an oracle. They mimic PAR2 in a
+new packaging and are kept as regression controls.
+
+The four scattered lanes are the ones where the parity format itself should
+matter. One 8 GiB stored RAR5 set is posted at 750 KiB articles, and each lane
+withholds individual articles spread evenly across the whole post rather than
+a whole volume. Both formats use one block per article, so every missing
+article costs exactly one damaged block, and a PAR2 lane and the PAR3 lane of
+the same severity withhold exactly the same articles (the draw is seeded by
+the set and severity, never by the format) at the same redundancy. PAR2's
+repair work grows with present blocks times missing blocks, while PAR3's FFT
+code grows roughly with the block count times its logarithm, so the light pair
+is where PAR2 should hold up and the heavy pair is where FFT should pull ahead.
+The set stays at 8 GiB on purpose: about 11,200 blocks keeps PAR2 at its best
+geometry, well under its 32,768-block limit, and keeps FFT inside one cohort
+(the transform domain is at most 65,536 and recovery at most 32,768 per
+cohort). A lane past PAR2's limit needs a set of roughly 24 GiB or more, and
+its cohort geometry must be validated before such a fixture is generated;
+the next lane is that one.
+
+`par3-fft-past-par2-cap` is the lane PAR2 cannot serve at any client. Its
+26 GiB stored RAR5 set is about 36,400 articles, more than the 32,768 source
+blocks a PAR2 set may hold, so PAR2's smallest legal block is about 852 KiB
+and nearly every withheld article straddles two PAR2 blocks. PAR3 keeps one
+block per article. The same 7 % loss is 2,541 lost PAR3 blocks against 3,640
+recovery blocks, while it damages about 4,830 PAR2 blocks against the 3,276 a
+10 % PAR2 set holds; PAR2 would need 15 %. The generator computes that PAR2
+count exactly from the withheld offsets at PAR2's smallest legal block size
+(PAR2 repairs only with at least as many recovery blocks as damaged blocks),
+refuses the fixture if PAR2 could repair it, and records the comparison in
+`repair.par3.par2_at_limit`; then it creates the PAR3 set and repairs a
+blanked copy with the reference as usual. The set is also split into two
+interleaved FFT cohorts (`-i1`), which the reference does unprompted only
+above 65,536 blocks, so the lane exercises per-cohort recovery accounting.
+A reduced-size local run cannot build this lane: shrinking the payload puts
+the post back under PAR2's limit and the generator refuses it. The lane runs
+in its own weaver-only phase, `B3-par3-past-cap-rtt10`, because a run needs
+roughly 26 GiB each for the fixture, the seeded articles, the download and
+the extracted output. A
+withheld article is recorded in `repair.corruptions` as
+`kind: "withheld-article"` with its raw byte offset and length; the seeder
+rewrites exactly those segments to never-posted message-ids and refuses any
+other article size. Generation zeroes those ranges in a verification copy and
+repairs it with the reference tool before the fixture is accepted. The
+scattered lanes run in the weaver-only chain phase `B3-par3-scale-rtt10`. PAR3 material comes from the official
 `par3cmdline` reference built from one pinned source revision; it runs inside
 the archive folder so every file is recorded by its flat posted name, and the
 manifest's `repair.par3` records the reference build and the exact creation
