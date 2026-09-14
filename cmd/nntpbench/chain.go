@@ -62,8 +62,17 @@ type ChainConfig struct {
 	// have the containerized stack: Windows has no netem, and on an ARM Mac
 	// every container runs inside a Linux virtual machine whose scheduling and
 	// networking are the very things this benchmark measures.
+	//
+	// "external" runs no server side at all: every phase downloads from a
+	// real Usenet provider described by ProviderEnv. Nothing is shaped, so the
+	// link is whatever the internet gives that session, and results from it
+	// are never pooled with a local stack's.
 	Stack string         `json:"stack,omitempty"`
 	Raw   *ChainRawStack `json:"raw,omitempty"`
+	// ProviderEnv is the .env file holding an external stack's provider. Only
+	// its path is ever written to a log or a phase command line. Defaults to
+	// .env beside the config file.
+	ProviderEnv string `json:"provider_env,omitempty"`
 
 	// ComposeFile and ComposeProject locate the NNTP server and shaper stack.
 	// The chain only ever recreates the shaper: recreating the server would
@@ -527,9 +536,17 @@ func loadChainConfig(path string) (ChainConfig, error) {
 	if config.ServerEnvDir == "" {
 		config.ServerEnvDir = base
 	}
+	if config.Stack == ChainStackExternal {
+		config.ProviderEnv = defaultChainString(config.ProviderEnv, ".env")
+		for i := range config.Phases {
+			// An external phase cannot be anything but the external link;
+			// saying so is optional.
+			config.Phases[i].ServerLink = defaultChainString(config.Phases[i].ServerLink, benchmark.LinkExternal)
+		}
+	}
 	for _, field := range []*string{
 		&config.ComposeFile, &config.PasswordFile, &config.Adapters, &config.CAFile,
-		&config.ArtifactsDir, &config.LogDir, &config.ServerEnvDir,
+		&config.ArtifactsDir, &config.LogDir, &config.ServerEnvDir, &config.ProviderEnv,
 	} {
 		*field = resolveChainPath(base, *field)
 	}
@@ -652,6 +669,27 @@ func validateChainConfig(config ChainConfig) error {
 		if phase.NFS != nil && config.Stack == ChainStackRaw {
 			return fmt.Errorf("phase %s: an NFS storage profile needs the throttled export container, which a raw stack does not run; native lanes are local-storage only", phase.Name)
 		}
+		if (phase.ServerLink == benchmark.LinkExternal) != (config.Stack == ChainStackExternal) {
+			return fmt.Errorf("phase %s: server_link %q belongs to an %s stack only, and an %s stack measures nothing else", phase.Name, benchmark.LinkExternal, ChainStackExternal, ChainStackExternal)
+		}
+		if config.Stack == ChainStackExternal {
+			if phase.NFS != nil {
+				return fmt.Errorf("phase %s: an external stack measures local storage only", phase.Name)
+			}
+			if phase.Mode == "queue-transition" {
+				return fmt.Errorf("phase %s: queue-transition verifies generated fixtures only; an external stack runs sequential or queue phases", phase.Name)
+			}
+			if phase.PlanSpec != nil {
+				for _, transport := range phase.PlanSpec.Transports {
+					if transport != string(benchmark.TLS) {
+						return fmt.Errorf("phase %s: an external stack sends a real login and measures over tls only, not %q", phase.Name, transport)
+					}
+				}
+				if len(phase.PlanSpec.Transports) == 0 {
+					return fmt.Errorf("phase %s: an external stack must declare plan_spec.transports [\"tls\"]; the default measures plaintext too", phase.Name)
+				}
+			}
+		}
 	}
 	if config.RestoreServerLink != "" {
 		restore := ChainPhase{ServerLink: config.RestoreServerLink, ServerRTT: config.RestoreServerRTT}
@@ -664,8 +702,9 @@ func validateChainConfig(config ChainConfig) error {
 
 // Stack kinds.
 const (
-	ChainStackDocker = "docker"
-	ChainStackRaw    = "raw"
+	ChainStackDocker   = "docker"
+	ChainStackRaw      = "raw"
+	ChainStackExternal = "external"
 )
 
 // validateChainStack holds each stack kind to the fields that mean something
@@ -674,6 +713,9 @@ const (
 func validateChainStack(config ChainConfig) error {
 	switch config.Stack {
 	case ChainStackDocker:
+		if config.ProviderEnv != "" {
+			return fmt.Errorf("provider_env is set on a docker stack; only an external stack reads a provider")
+		}
 		if config.ComposeFile == "" {
 			return fmt.Errorf("compose_file is required for a docker stack")
 		}
@@ -681,9 +723,14 @@ func validateChainStack(config ChainConfig) error {
 			return fmt.Errorf("raw is set on a docker stack")
 		}
 		return nil
+	case ChainStackExternal:
+		return validateExternalChainStack(config)
 	case ChainStackRaw:
 	default:
-		return fmt.Errorf("stack %q is not one of %s, %s", config.Stack, ChainStackDocker, ChainStackRaw)
+		return fmt.Errorf("stack %q is not one of %s, %s, %s", config.Stack, ChainStackDocker, ChainStackRaw, ChainStackExternal)
+	}
+	if config.ProviderEnv != "" {
+		return fmt.Errorf("provider_env is set on a %s stack; only an external stack reads a provider", config.Stack)
 	}
 	if config.Raw == nil {
 		return fmt.Errorf("raw is required for a raw stack")
@@ -711,6 +758,48 @@ func validateChainStack(config ChainConfig) error {
 		return err
 	}
 	return nil
+}
+
+// validateExternalChainStack refuses every setting that describes a server
+// side the session will not have. The provider's endpoint and login come only
+// from provider_env, so a config that also names a host, a port or a password
+// file would describe two different providers.
+func validateExternalChainStack(config ChainConfig) error {
+	for _, field := range []struct {
+		set  bool
+		name string
+	}{
+		{config.Raw != nil, "raw"},
+		{config.ComposeFile != "", "compose_file"},
+		{config.PasswordFile != "", "password_file"},
+		{config.NNTPHost != "", "nntp_host"},
+		{config.NNTPPort != "", "nntp_port"},
+		{config.NNTPTLSPort != "", "nntp_tls_port"},
+		{config.Username != "", "username"},
+		{config.CAFile != "", "ca_file"},
+		{config.ShaperControlURL != "", "shaper_control_url"},
+		{config.Connections != 0, "connections"},
+		{config.RestoreServerLink != "" || config.RestoreServerRTT != "", "restore_server_link"},
+		{config.Require.ServerPipeliningContainer != "", "require.server_pipelining_container"},
+	} {
+		if field.set {
+			return fmt.Errorf("%s is set on an external stack, whose provider comes only from provider_env", field.name)
+		}
+	}
+	if config.ProviderEnv == "" {
+		return fmt.Errorf("an external stack needs provider_env")
+	}
+	return nil
+}
+
+// externalExecutionTarget is the target an external session records under when
+// the config names none: the host's native target where it has one, and the
+// Docker lane everywhere else.
+func externalExecutionTarget() benchmark.ExecutionTarget {
+	if target, err := rawExecutionTarget(); err == nil {
+		return target
+	}
+	return benchmark.DockerLinux
 }
 
 // rawExecutionTarget is the execution target a raw stack's host records under.
@@ -868,6 +957,18 @@ func chainRawStackConfig(config ChainConfig) (rawstack.Config, error) {
 // asking the operator to restate them in the config keeps the run arguments
 // and the running processes from ever describing different endpoints.
 func newChainStack(config *ChainConfig, log func(string, ...any)) (chainStack, error) {
+	if config.Stack == ChainStackExternal {
+		provider, err := benchmark.LoadProviderEnv(config.ProviderEnv)
+		if err != nil {
+			return nil, err
+		}
+		if !provider.TLS {
+			return nil, fmt.Errorf("provider env %s sets NNTP_TLS=false; an external stack sends a real login and measures over TLS only", config.ProviderEnv)
+		}
+		config.Target = defaultChainString(config.Target, string(externalExecutionTarget()))
+		log("external stack: provider from %s, %d connection(s), target %s", config.ProviderEnv, provider.Connections, config.Target)
+		return externalChainStack{provider: provider}, nil
+	}
 	if config.Stack != ChainStackRaw {
 		return dockerChainStack{}, nil
 	}
@@ -913,6 +1014,30 @@ func (dockerChainStack) apply(config ChainConfig, phase ChainPhase, log func(str
 }
 
 func (dockerChainStack) stop(func(string, ...any)) {}
+
+// externalChainStack is a real provider. There is nothing to start, shape or
+// stop; the chain only confirms the provider is reachable before it builds
+// plans against it.
+type externalChainStack struct {
+	provider benchmark.ProviderEnv
+}
+
+// preflight opens one TLS connection, validated against the host's public
+// roots exactly as the clients will validate it, and reads the greeting. It
+// never authenticates: a login is the clients' to make, and a probe that
+// spent one would count against the account's connection limit mid-session.
+func (e externalChainStack) preflight(log func(string, ...any)) error {
+	greeting, err := probeExternalProvider(e.provider, 20*time.Second)
+	if err != nil {
+		return err
+	}
+	log("precondition ok: the provider answers over TLS with a publicly trusted certificate (%s)", greeting)
+	return nil
+}
+
+func (externalChainStack) apply(ChainConfig, ChainPhase, func(string, ...any)) error { return nil }
+
+func (externalChainStack) stop(func(string, ...any)) {}
 
 type rawChainStack struct {
 	stack   *rawstack.Stack
@@ -1113,7 +1238,7 @@ func runChainPhase(config ChainConfig, phase ChainPhase, log func(string, ...any
 	}
 	// A raw session starts no containers, so there are none to clean up and
 	// nothing to ask a Docker daemon that may not be installed at all.
-	if config.Stack != ChainStackRaw {
+	if config.Stack == ChainStackDocker || (config.Stack == ChainStackExternal && config.Target == string(benchmark.DockerLinux)) {
 		removeStrayRunContainers(log)
 	}
 	releaseShaperLease(config.ShaperControlURL, log)
@@ -1164,6 +1289,7 @@ func chainPhaseArgs(config ChainConfig, phase ChainPhase) []string {
 		"--tls-ca-file":        config.CAFile,
 		"--username":           config.Username,
 		"--password-file":      config.PasswordFile,
+		"--provider-env":       config.ProviderEnv,
 		"--timeout":            config.Timeout,
 	}
 	if config.Connections > 0 {
@@ -1608,13 +1734,20 @@ func checkChainPhaseFixtures(phases []ChainPhase, built map[string]benchmark.Pla
 		// points at a seed image built for the other stratum is caught here
 		// rather than producing a full set of results filed under a size they
 		// were not measured at.
-		var missing, undersized, unclassified, mismatchedArticles []string
+		var missing, undersized, unclassified, mismatchedArticles, wrongOrigin []string
+		external := plan.ServerLink.ID == benchmark.LinkExternal
 		for _, id := range plan.FixtureIDs {
 			manifest, err := fixture.LoadGeneratedManifest(
 				filepath.Join(phase.FixturesRoot, id, "fixture-manifest.json"))
 			if err != nil {
 				missing = append(missing, id)
 				continue
+			}
+			// An imported post exists only on the real provider, and a seeded
+			// one only in the local article store; either one on the other
+			// stack fails every article it asks for.
+			if (manifest.External != nil) != external {
+				wrongOrigin = append(wrongOrigin, id)
 			}
 			if err := manifest.ValidatePostedSize(); err != nil {
 				undersized = append(undersized,
@@ -1638,6 +1771,7 @@ func checkChainPhaseFixtures(phases []ChainPhase, built map[string]benchmark.Pla
 			message  string
 		}{
 			{missing, "have no fixture manifest under " + phase.FixturesRoot},
+			{wrongOrigin, chainFixtureOriginProblem(external)},
 			{undersized, fmt.Sprintf("post less than the %d MiB floor and would fail their suites",
 				fixture.MinimumPostedBytes>>20)},
 			{unclassified, "declare no headline or breadth class, so this phase would summarize to nothing"},
@@ -1654,6 +1788,13 @@ func checkChainPhaseFixtures(phases []ChainPhase, built map[string]benchmark.Pla
 		log("precondition ok: phase %s names %d usable fixtures at %s articles", phase.Name, len(plan.FixtureIDs), plan.ArticleProfile)
 	}
 	return nil
+}
+
+func chainFixtureOriginProblem(external bool) string {
+	if external {
+		return "were seeded into the local article store, which a real provider does not carry; import posted NZBs with nntpbench import-nzb"
+	}
+	return "are imported posts that exist only on a real provider; measure them on an external stack"
 }
 
 // processRunning reports whether a process whose command line contains name is

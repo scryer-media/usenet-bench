@@ -35,11 +35,17 @@ const (
 	// Usenet are at this size — the corpus makes no such claim — only that it
 	// is a size real posts are at, and the smallest that is still common.
 	Article384K = "384k"
+	// Article700K is 716800 bytes, Nyuu's own default. The corpus is never
+	// seeded at it; it exists for posts the benchmark did not make, such as a
+	// provider's or a client project's published test download, which were
+	// posted at whatever the poster's default was.
+	Article700K = "700k"
 )
 
 var articleProfiles = map[string]int{
 	Article750K: 750 << 10,
 	Article384K: 384 << 10,
+	Article700K: 700 << 10,
 }
 
 // DefaultArticleProfile is what a plan that does not mention article size

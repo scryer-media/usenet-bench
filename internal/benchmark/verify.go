@@ -2,11 +2,15 @@ package benchmark
 
 import (
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
+	"time"
 
 	"github.com/scryer-media/usenet-bench/internal/fixture"
 	"github.com/zeebo/blake3"
@@ -15,7 +19,24 @@ import (
 type OutputVerification struct {
 	FixtureID string               `json:"fixture_id"`
 	Files     []VerifiedOutputFile `json:"files"`
+	// Reference says what an external fixture's output was checked against:
+	// "pinned" when it matched output an earlier run pinned, "pinned-here"
+	// when this run was the first to finish and pinned its own. It is empty
+	// for a generated fixture, whose manifest is the oracle.
+	Reference string `json:"reference,omitempty"`
 }
+
+// Pinned-output references.
+const (
+	ReferencePinned     = "pinned"
+	ReferencePinnedHere = "pinned-here"
+)
+
+// minimumPinnedFileBytes is the smallest output file a pin takes. Clients
+// leave small bookkeeping files of their own beside what they extract -- logs,
+// reports, markers -- and each client leaves different ones, so a pin that
+// took them would fail every client but the one that pinned.
+const minimumPinnedFileBytes = 1 << 20
 
 type VerifiedOutputFile struct {
 	ExpectedPath string `json:"expected_path"`
@@ -38,12 +59,24 @@ func VerifyOutput(fixtureDir, outputDir string) (OutputVerification, error) {
 	if err != nil {
 		return OutputVerification{}, err
 	}
+	reference := ""
+	if len(manifest.ExpectedFiles) == 0 && manifest.External != nil {
+		pinned, found, err := loadPinnedOutput(fixtureDir)
+		if err != nil {
+			return OutputVerification{}, err
+		}
+		if !found {
+			return pinOutput(fixtureDir, outputDir, manifest, actual)
+		}
+		manifest.ExpectedFiles = pinned.Files
+		reference = ReferencePinned
+	}
 	allCandidates := make([]discoveredFile, 0)
 	for _, byName := range actual {
 		allCandidates = append(allCandidates, byName...)
 	}
 	sort.Slice(allCandidates, func(i, j int) bool { return allCandidates[i].path < allCandidates[j].path })
-	result := OutputVerification{FixtureID: manifest.Case.ID, Files: make([]VerifiedOutputFile, 0, len(manifest.ExpectedFiles))}
+	result := OutputVerification{FixtureID: manifest.Case.ID, Files: make([]VerifiedOutputFile, 0, len(manifest.ExpectedFiles)), Reference: reference}
 	used := make(map[string]bool, len(manifest.ExpectedFiles))
 	digests := make(map[string]string)
 	for _, expected := range manifest.ExpectedFiles {
@@ -62,6 +95,99 @@ func VerifyOutput(fixtureDir, outputDir string) (OutputVerification, error) {
 		}
 		used[filepath.Clean(filepath.Join(outputDir, filepath.FromSlash(verified.ActualPath)))] = true
 		result.Files = append(result.Files, *verified)
+	}
+	return result, nil
+}
+
+// loadPinnedOutput reads an external fixture's pinned output, if a run has
+// pinned one yet.
+func loadPinnedOutput(fixtureDir string) (fixture.PinnedOutput, bool, error) {
+	path := filepath.Join(fixtureDir, fixture.PinnedOutputName)
+	contents, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return fixture.PinnedOutput{}, false, nil
+	}
+	if err != nil {
+		return fixture.PinnedOutput{}, false, fmt.Errorf("read pinned output %s: %w", path, err)
+	}
+	var pinned fixture.PinnedOutput
+	if err := json.Unmarshal(contents, &pinned); err != nil {
+		return fixture.PinnedOutput{}, false, fmt.Errorf("decode pinned output %s: %w", path, err)
+	}
+	if pinned.SchemaVersion != 1 || len(pinned.Files) == 0 {
+		return fixture.PinnedOutput{}, false, fmt.Errorf("pinned output %s is incomplete", path)
+	}
+	for _, file := range pinned.Files {
+		if file.Size <= 0 || len(file.BLAKE3) != 64 {
+			return fixture.PinnedOutput{}, false, fmt.Errorf("pinned output %s has an invalid entry for %s", path, file.Path)
+		}
+	}
+	return pinned, true, nil
+}
+
+// pinOutput makes the first finished run's output the oracle for an external
+// fixture. It takes only what the client extracted: never a file the post
+// itself carried under the same name, which is an archive volume or recovery
+// file left behind rather than a result, and never a small or hidden file,
+// which is the client's own bookkeeping. A run that extracted nothing pins
+// nothing and fails.
+func pinOutput(fixtureDir, outputDir string, manifest fixture.GeneratedManifest, actual map[string][]discoveredFile) (OutputVerification, error) {
+	posted := make(map[string]bool, len(manifest.ArchiveFiles))
+	for _, file := range manifest.PostedFiles() {
+		posted[filepath.Base(file.Path)] = true
+	}
+	candidates := make([]discoveredFile, 0)
+	for name, files := range actual {
+		if posted[name] || strings.HasPrefix(name, ".") {
+			continue
+		}
+		for _, file := range files {
+			if file.size >= minimumPinnedFileBytes {
+				candidates = append(candidates, file)
+			}
+		}
+	}
+	if len(candidates) == 0 {
+		return OutputVerification{}, fmt.Errorf("output %s holds nothing extracted from %s to pin: every file is either one the post carried or under %d bytes", outputDir, manifest.Case.ID, minimumPinnedFileBytes)
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].path < candidates[j].path })
+	pinned := fixture.PinnedOutput{
+		SchemaVersion: 1,
+		FixtureID:     manifest.Case.ID,
+		PinnedAt:      time.Now().UTC().Format(time.RFC3339),
+		PinnedFrom:    outputDir,
+	}
+	result := OutputVerification{FixtureID: manifest.Case.ID, Reference: ReferencePinnedHere}
+	for _, candidate := range candidates {
+		digest, err := hashFile(candidate.path)
+		if err != nil {
+			return OutputVerification{}, err
+		}
+		relative, err := filepath.Rel(outputDir, candidate.path)
+		if err != nil {
+			return OutputVerification{}, err
+		}
+		relative = filepath.ToSlash(relative)
+		pinned.Files = append(pinned.Files, fixture.FileDigest{Path: relative, Size: candidate.size, BLAKE3: digest})
+		result.Files = append(result.Files, VerifiedOutputFile{ExpectedPath: relative, ActualPath: relative, Size: candidate.size, BLAKE3: digest})
+	}
+	contents, err := json.MarshalIndent(pinned, "", "  ")
+	if err != nil {
+		return OutputVerification{}, err
+	}
+	path := filepath.Join(fixtureDir, fixture.PinnedOutputName)
+	// Exclusive creation: a pin is written once and never replaced, so an
+	// operator who wants a different oracle has to remove it deliberately.
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		return OutputVerification{}, fmt.Errorf("pin the output of %s: %w", manifest.Case.ID, err)
+	}
+	if _, err := file.Write(append(contents, '\n')); err != nil {
+		file.Close()
+		return OutputVerification{}, fmt.Errorf("pin the output of %s: %w", manifest.Case.ID, err)
+	}
+	if err := file.Close(); err != nil {
+		return OutputVerification{}, fmt.Errorf("pin the output of %s: %w", manifest.Case.ID, err)
 	}
 	return result, nil
 }

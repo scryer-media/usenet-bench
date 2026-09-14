@@ -226,8 +226,11 @@ func (c Config) Validate() error {
 			return fmt.Errorf("plaintext runs must report not_applicable TLS validation and plaintext label")
 		}
 	} else {
-		if c.TLSValidation != benchmark.TLSCAVerified && c.TLSValidation != benchmark.TLSDisabled {
+		if !c.TLSValidation.ValidForTLS() {
 			return fmt.Errorf("TLS run has unsupported TLS validation %q", c.TLSValidation)
+		}
+		if (c.TLSValidation == benchmark.TLSPublicRoots) != (c.ServerLink.ID == benchmark.LinkExternal) {
+			return fmt.Errorf("TLS validation %q does not belong on the %q link; public_roots is for a real provider only", c.TLSValidation, c.ServerLink.ID)
 		}
 		if c.TLSValidation == benchmark.TLSDisabled && c.Client != benchmark.SABnzbd {
 			return fmt.Errorf("only SABnzbd may run with TLS validation disabled")
@@ -262,6 +265,12 @@ func (c Config) Validate() error {
 	}
 	if len(c.LaunchCommand) == 0 || strings.TrimSpace(c.LaunchCommand[0]) == "" {
 		return fmt.Errorf("NATIVE_LAUNCH_COMMAND must contain a program path")
+	}
+	if c.Client == benchmark.NZBGet && c.Transport == benchmark.TLS && c.TLSValidation == benchmark.TLSPublicRoots {
+		store := NZBGetCertStore(c.LaunchCommand[0])
+		if _, err := os.Stat(store); err != nil {
+			return fmt.Errorf("NZBGet verifies a real provider against %s, which is unavailable (set NATIVE_NZBGET_CERT_STORE to its CA bundle): %w", store, err)
+		}
 	}
 	if strings.TrimSpace(c.ClientVersion) == "" {
 		return fmt.Errorf("NATIVE_CLIENT_VERSION is required")

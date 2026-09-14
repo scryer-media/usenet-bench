@@ -78,6 +78,10 @@ type RunConfig struct {
 	Connections      int
 	Profile          string
 	Timeout          time.Duration
+	// ScrubPassword overwrites the NNTP password in everything a run leaves
+	// behind apart from its downloads. It is set for a real provider, whose
+	// password the client configurations, state and logs would otherwise keep.
+	ScrubPassword bool
 }
 
 type RunArtifact struct {
@@ -343,6 +347,7 @@ func executeRun(parent context.Context, config RunConfig, run Run) (artifact Run
 		return artifact
 	}
 	defer func() {
+		scrubRunDirectory(config, runDir, &artifact.Status, &artifact.Error)
 		persistRunArtifact(filepath.Join(runDir, "run.json"), &artifact)
 	}()
 	// The client's intermediate and completion directories are siblings under
@@ -508,6 +513,19 @@ func invokeAdapter(parent context.Context, config RunConfig, run Run, adapter Ad
 func invokeQueueAdapter(parent context.Context, config RunConfig, run Run, adapter Adapter, nzbPath, archivePassword, outputDir, configDir, resultPath, logPath, queuePath string, storageEnvironment []string) error {
 	extra := append([]string{"BENCH_QUEUE_PATH=" + queuePath}, storageEnvironment...)
 	return invokeAdapterWithExtraEnvironment(parent, config, run, adapter, filepath.Dir(nzbPath), nzbPath, archivePassword, outputDir, configDir, resultPath, logPath, extra)
+}
+
+// scrubRunDirectory removes the provider password from a finished run's
+// evidence. A run whose evidence cannot be scrubbed is failed, so a password
+// left on disk is always reported rather than discovered later.
+func scrubRunDirectory(config RunConfig, runDir string, status, message *string) {
+	if !config.ScrubPassword {
+		return
+	}
+	if err := ScrubSecret(runDir, filepath.Join(runDir, "downloads"), config.NNTPPassword); err != nil {
+		appendArtifactError(message, err.Error())
+		*status = "failed"
+	}
 }
 
 // appendArtifactError keeps a deferred cleanup failure visible without hiding

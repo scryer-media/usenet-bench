@@ -268,8 +268,11 @@ func (c Config) Validate() error {
 			return fmt.Errorf("plaintext runs must report not_applicable TLS validation and plaintext label")
 		}
 	} else {
-		if c.TLSValidation != benchmark.TLSCAVerified && c.TLSValidation != benchmark.TLSDisabled {
+		if !c.TLSValidation.ValidForTLS() {
 			return fmt.Errorf("TLS run has unsupported TLS validation %q", c.TLSValidation)
+		}
+		if (c.TLSValidation == benchmark.TLSPublicRoots) != (c.ServerLink.ID == benchmark.LinkExternal) {
+			return fmt.Errorf("TLS validation %q does not belong on the %q link; public_roots is for a real provider only", c.TLSValidation, c.ServerLink.ID)
 		}
 		if c.TLSValidation == benchmark.TLSDisabled && c.Client != benchmark.SABnzbd {
 			return fmt.Errorf("only SABnzbd may run with TLS validation disabled")
@@ -386,7 +389,7 @@ func (c Config) RenderProductConfig() (ProductSpec, error) {
 		return ProductSpec{}, fmt.Errorf("unsupported client %q", c.Client)
 	}
 	spec.NeedsCAMount = c.Transport == benchmark.TLS && c.TLSValidation == benchmark.TLSCAVerified
-	spec.Rendered = renderAuditConfig(c, spec)
+	spec.Rendered = benchmark.RedactSecret(renderAuditConfig(c, spec), c.NNTPPassword)
 	digest := sha256.Sum256(spec.Rendered)
 	spec.ConfigSHA256 = hex.EncodeToString(digest[:])
 	return spec, nil
@@ -496,6 +499,19 @@ func renderWeaver(c Config, _ bool) ProductSpec {
 	}
 }
 
+// sabnzbdSSLVerify renders SABnzbd's certificate policy. Against the lab
+// server verification stays off, as the plan labels it: SAB's local CA support
+// is not reliable in this harness, so verified TLS is never claimed for it
+// there. Against a real provider SAB checks the certificate against the trust
+// store it ships with at its strictest setting, 3, so a result labelled
+// public_roots never rests on a weaker check than the other clients make.
+func sabnzbdSSLVerify(validation benchmark.TLSValidation) string {
+	if validation == benchmark.TLSPublicRoots {
+		return "3"
+	}
+	return "0"
+}
+
 func renderSABnzbd(c Config, directUnpack bool) ProductSpec {
 	ssl := "0"
 	if c.NNTPUseTLS {
@@ -533,10 +549,7 @@ func renderSABnzbd(c Config, directUnpack bool) ProductSpec {
 		// SABnzbd's own default for a newly added server (5.0 and later).
 		"pipelining_requests = 2",
 		"ssl = " + ssl,
-		// This is intentional and policy-labelled by the plan. SAB's local CA
-		// support is not reliable in this harness, so verified TLS is never
-		// claimed for SABnzbd.
-		"ssl_verify = 0",
+		"ssl_verify = " + sabnzbdSSLVerify(c.TLSValidation),
 		"",
 	}, "\n")
 	environment := linuxServerEnvironment()
@@ -554,6 +567,11 @@ func renderSABnzbd(c Config, directUnpack bool) ProductSpec {
 // `7z` happens to come first on PATH inside the image.
 const nzbgetSevenZipCommand = "/usr/bin/7zz"
 
+// nzbgetImageCertStore is the public CA bundle the LinuxServer images carry
+// from their Alpine base. CLIENT_NZBGET_CERT_STORE overrides it for an image
+// that keeps its bundle elsewhere.
+const nzbgetImageCertStore = "/etc/ssl/certs/ca-certificates.crt"
+
 func renderNZBGet(c Config, directUnpack bool) ProductSpec {
 	encryption := "no"
 	verification := "none"
@@ -561,9 +579,16 @@ func renderNZBGet(c Config, directUnpack bool) ProductSpec {
 	certCheck := "no"
 	if c.NNTPUseTLS {
 		encryption = "yes"
-		if c.TLSValidation == benchmark.TLSCAVerified {
+		switch c.TLSValidation {
+		case benchmark.TLSCAVerified:
 			verification = "strict"
 			certStore = "/benchmark-ca/nntp-ca.pem"
+			certCheck = "yes"
+		case benchmark.TLSPublicRoots:
+			// NZBGet verifies nothing without a certificate store, and the
+			// image's own is the public bundle its distribution ships.
+			verification = "strict"
+			certStore = defaultString(os.Getenv("CLIENT_NZBGET_CERT_STORE"), nzbgetImageCertStore)
 			certCheck = "yes"
 		}
 	}

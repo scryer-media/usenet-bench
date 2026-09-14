@@ -36,6 +36,11 @@ const (
 	TLSNotApplicable TLSValidation = "not_applicable"
 	TLSCAVerified    TLSValidation = "ca_verified"
 	TLSDisabled      TLSValidation = "disabled"
+	// TLSPublicRoots verifies a real provider's certificate chain and name
+	// against the trust store the client ships with, the way an ordinary
+	// install connects. The lab CA is never involved, so every client -- SABnzbd
+	// included -- can verify, and the label says which trust store did it.
+	TLSPublicRoots TLSValidation = "public_roots"
 )
 
 const (
@@ -154,6 +159,9 @@ func BuildPlan(options PlanOptions) (Plan, error) {
 	}
 	if options.ArticleProfile.ID == "" {
 		options.ArticleProfile = DefaultArticleProfile()
+	}
+	if len(options.ClientProfiles) == 0 && options.ServerLink.ID == LinkExternal {
+		options.ClientProfiles = PublicRootsClientProfiles(options.Clients)
 	}
 	if len(options.ClientProfiles) == 0 {
 		options.ClientProfiles = DefaultClientProfiles(options.Clients)
@@ -330,6 +338,13 @@ func (p Plan) Validate() error {
 		} else if run.TLSValidation != profile.TLSValidation || run.TransportLabel != profile.TLSResultLabel {
 			return fmt.Errorf("benchmark plan run %s does not report %s TLS policy for %s", run.ID, profile.TLSValidation, run.Client)
 		}
+		// The public trust store only means something against a real
+		// provider, and a real provider is only ever reached with it: the lab
+		// CA would fail its certificate, and a disabled check would not be
+		// the connection an ordinary install makes.
+		if run.Transport == TLS && (run.TLSValidation == TLSPublicRoots) != (p.ServerLink.ID == LinkExternal) {
+			return fmt.Errorf("benchmark plan run %s declares %s TLS over the %q link; public_roots and the external link go together", run.ID, run.TLSValidation, p.ServerLink.ID)
+		}
 		key := strings.Join([]string{run.FixtureID, string(run.Transport), string(run.ExecutionTarget), fmt.Sprint(run.Repetition), string(run.Client), string(run.ArchiveToolchain)}, "\x00")
 		if seen[key] {
 			return fmt.Errorf("benchmark plan repeats run tuple %q", key)
@@ -489,6 +504,25 @@ func DefaultClientProfiles(clients []Client) []ClientProfile {
 	return profiles
 }
 
+// PublicRootsClientProfiles is the policy for a real provider: every client
+// verifies the server against the public trust store it ships with.
+func PublicRootsClientProfiles(clients []Client) []ClientProfile {
+	profiles := make([]ClientProfile, 0, len(clients))
+	for _, client := range clients {
+		profiles = append(profiles, ClientProfile{
+			Client:         client,
+			TLSValidation:  TLSPublicRoots,
+			TLSResultLabel: "tls-public-roots",
+		})
+	}
+	return profiles
+}
+
+// ValidForTLS reports whether a TLS run may declare this validation.
+func (v TLSValidation) ValidForTLS() bool {
+	return v == TLSCAVerified || v == TLSDisabled || v == TLSPublicRoots
+}
+
 func validateClientProfiles(clients []Client, profiles []ClientProfile) error {
 	if len(profiles) != len(clients) {
 		return fmt.Errorf("client profiles must contain exactly one entry per client")
@@ -499,7 +533,7 @@ func validateClientProfiles(clients []Client, profiles []ClientProfile) error {
 			return fmt.Errorf("client profiles repeat %q", profile.Client)
 		}
 		seen[profile.Client] = true
-		if profile.TLSValidation != TLSCAVerified && profile.TLSValidation != TLSDisabled {
+		if !profile.TLSValidation.ValidForTLS() {
 			return fmt.Errorf("client profile %q has unsupported TLS validation %q", profile.Client, profile.TLSValidation)
 		}
 		if strings.TrimSpace(profile.TLSResultLabel) == "" {

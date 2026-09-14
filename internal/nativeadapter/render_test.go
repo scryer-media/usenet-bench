@@ -286,3 +286,33 @@ func testConfig(client benchmark.Client) Config {
 		ClientVersion:    "test",
 	}
 }
+
+func TestNativePublicRootsTLSValidatesAgainstEachClientsOwnStore(t *testing.T) {
+	store := filepath.Join(t.TempDir(), "cacert.pem")
+	t.Setenv("NATIVE_NZBGET_CERT_STORE", store)
+	for _, client := range []benchmark.Client{benchmark.SABnzbd, benchmark.NZBGet} {
+		cfg := testConfig(client)
+		cfg.Transport = benchmark.TLS
+		cfg.NNTPUseTLS = true
+		cfg.TLSValidation = benchmark.TLSPublicRoots
+		cfg.TransportLabel = "tls-public-roots"
+		cfg.NNTPPassword = "provider-secret"
+		spec, err := renderProduct(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		content := string(spec.Content)
+		want := []string{"ssl_verify = 3"}
+		if client == benchmark.NZBGet {
+			want = []string{"Server1.CertVerification=strict", "CertStore=" + store, "CertCheck=yes"}
+		}
+		for _, expected := range want {
+			if !strings.Contains(content, expected) {
+				t.Fatalf("%s config lacks %q:\n%s", client, expected, content)
+			}
+		}
+		if strings.Contains(string(spec.Rendered), "provider-secret") {
+			t.Fatalf("%s audit config keeps the provider password:\n%s", client, spec.Rendered)
+		}
+	}
+}

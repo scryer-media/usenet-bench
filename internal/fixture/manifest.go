@@ -71,6 +71,40 @@ type GeneratedManifest struct {
 	// Case.Encoding so a reader of the manifest need not know which field is
 	// authoritative; the two are written together and checked on load.
 	Encoding PostEncoding `json:"encoding"`
+	// External is present on a fixture the benchmark did not make: a post
+	// already on a real provider, imported from its NZB. Nothing about its
+	// payload is known in advance, so its ExpectedFiles may be empty; the
+	// oracle is then the output pinned beside it (see PinnedOutput).
+	External *ExternalPostDetails `json:"external,omitempty"`
+}
+
+// ExternalPostDetails records where an imported post came from. The NZB's
+// digest is what ties every result to one post, since the article bodies live
+// on a server the benchmark cannot inspect.
+type ExternalPostDetails struct {
+	Description string `json:"description,omitempty"`
+	NZBSHA256   string `json:"nzb_sha256"`
+	// ArticleRawBytes is the article size the poster split the files at,
+	// read off the NZB's own segment counts.
+	ArticleRawBytes int      `json:"article_raw_bytes"`
+	Groups          []string `json:"groups"`
+}
+
+// PinnedOutputName is the file beside an external fixture's manifest that
+// holds its pinned output.
+const PinnedOutputName = "expected-output.json"
+
+// PinnedOutput is the oracle for an external fixture whose payload was not
+// known when it was imported. The first run that finishes pins what it
+// extracted, and every later run, by any client, must reproduce those files
+// byte for byte. A wrong pin cannot pass quietly: it fails every other
+// client's runs.
+type PinnedOutput struct {
+	SchemaVersion int          `json:"schema_version"`
+	FixtureID     string       `json:"fixture_id"`
+	PinnedAt      string       `json:"pinned_at"`
+	PinnedFrom    string       `json:"pinned_from"`
+	Files         []FileDigest `json:"files"`
 }
 
 // CompressionDetails is the writer's measured result for this fixture.
@@ -232,7 +266,7 @@ func LoadGeneratedManifest(path string) (GeneratedManifest, error) {
 	if manifest.SchemaVersion < 1 || manifest.SchemaVersion > GeneratedManifestSchemaVersion {
 		return GeneratedManifest{}, fmt.Errorf("unsupported generated fixture schema version %d", manifest.SchemaVersion)
 	}
-	if manifest.Case.ID == "" || len(manifest.ExpectedFiles) == 0 || len(manifest.ArchiveFiles) == 0 {
+	if manifest.Case.ID == "" || (len(manifest.ExpectedFiles) == 0 && manifest.External == nil) || len(manifest.ArchiveFiles) == 0 {
 		return GeneratedManifest{}, fmt.Errorf("fixture manifest %s is incomplete", path)
 	}
 	if manifest.SchemaVersion < 4 {

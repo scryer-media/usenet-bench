@@ -70,6 +70,8 @@ func main() {
 		err = summarize(os.Args[2:])
 	case "preflight":
 		err = preflight(os.Args[2:])
+	case "import-nzb":
+		err = importNZB(os.Args[2:])
 	case "verify-output":
 		err = verifyOutput(os.Args[2:])
 	case "delete-output":
@@ -817,6 +819,98 @@ func bundledLauncherTarget(path string) (string, bool) {
 	return found, found != ""
 }
 
+// applyProviderEnv points a run at a real provider. The provider's settings
+// come only from the file, so none of them -- the password least of all --
+// ever appears on a command line, in a process listing or in the execution
+// manifest, which records the arguments.
+func applyProviderEnv(flags *flag.FlagSet, config *benchmark.RunConfig, path string) (*benchmark.ProviderEnv, error) {
+	conflicting := map[string]bool{"nntp-host": true, "nntp-port": true, "nntp-tls-port": true, "tls-ca-file": true, "username": true, "password": true, "password-file": true, "connections": true, "shaper-control-url": true}
+	var conflicts []string
+	flags.Visit(func(set *flag.Flag) {
+		if conflicting[set.Name] {
+			conflicts = append(conflicts, "--"+set.Name)
+		}
+	})
+	if len(conflicts) > 0 {
+		return nil, fmt.Errorf("--provider-env supplies the provider; drop %s", strings.Join(conflicts, ", "))
+	}
+	provider, err := benchmark.LoadProviderEnv(path)
+	if err != nil {
+		return nil, err
+	}
+	config.NNTPHost = provider.Host
+	// Both ports name the provider's one port; checkProviderPlan refuses a
+	// plan whose transport the provider was not declared to speak.
+	config.TLSPort = provider.Port
+	config.PlaintextPort = provider.Port
+	config.NNTPUsername = provider.Username
+	config.NNTPPassword = provider.Password
+	config.Connections = provider.Connections
+	config.ScrubPassword = provider.Password != ""
+	return &provider, nil
+}
+
+// checkProviderPlan keeps a real provider's transport what its .env declares:
+// a plaintext run against a TLS provider would send the login in the clear to
+// a port that is not listening for it.
+func checkProviderPlan(plan benchmark.Plan, provider benchmark.ProviderEnv) error {
+	want := benchmark.Plaintext
+	if provider.TLS {
+		want = benchmark.TLS
+	}
+	for _, run := range plan.Runs {
+		if run.Transport != want {
+			return fmt.Errorf("plan run %s uses %s but the provider env declares %s", run.ID, run.Transport, want)
+		}
+		if run.Transport == benchmark.TLS && run.TLSValidation != benchmark.TLSPublicRoots {
+			return fmt.Errorf("plan run %s validates TLS as %s; a real provider is validated against public roots", run.ID, run.TLSValidation)
+		}
+	}
+	if plan.ServerLink.ID != benchmark.LinkExternal {
+		return fmt.Errorf("plan server link is %q; a real provider needs a plan built for the %q link", plan.ServerLink.ID, benchmark.LinkExternal)
+	}
+	return nil
+}
+
+func importNZB(args []string) error {
+	flags := flag.NewFlagSet("import-nzb", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	var nzbPath, fixtureID, fixturesRoot, class, articleSize, description string
+	flags.StringVar(&nzbPath, "nzb", "", "NZB of a post that already exists on the provider")
+	flags.StringVar(&fixtureID, "id", "", "fixture id (lower-case letters, digits and hyphens)")
+	flags.StringVar(&fixturesRoot, "fixtures-root", "", "directory the fixture directory is created in")
+	flags.StringVar(&class, "class", string(fixture.HeadlineFixtureClass), "fixture class: headline or breadth")
+	flags.StringVar(&articleSize, "article-size", benchmark.Article700K, "article stratum the post was split at")
+	flags.StringVar(&description, "description", "", "what the post is, recorded in the manifest")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if nzbPath == "" || fixtureID == "" || fixturesRoot == "" {
+		return fmt.Errorf("--nzb, --id and --fixtures-root are required")
+	}
+	profile, err := benchmark.ResolveArticleProfile(articleSize)
+	if err != nil {
+		return err
+	}
+	manifest, err := nntp.ImportExternalNZB(nntp.ExternalImport{
+		NZBPath:         nzbPath,
+		FixturesRoot:    fixturesRoot,
+		FixtureID:       fixtureID,
+		Class:           fixture.FixtureClass(class),
+		Description:     description,
+		ArticleRawBytes: profile.RawBytes,
+	})
+	if err != nil {
+		return err
+	}
+	var posted int64
+	for _, file := range manifest.ArchiveFiles {
+		posted += file.Size
+	}
+	fmt.Printf("imported %s: %d files, %d bytes, %s articles, groups %v\n", manifest.Case.ID, len(manifest.ArchiveFiles), posted, profile.ID, manifest.External.Groups)
+	return nil
+}
+
 func verifyOutput(args []string) error {
 	flags := flag.NewFlagSet("verify-output", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
@@ -859,7 +953,7 @@ func execute(args []string, command string) error {
 	queueMode := command != "run"
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
-	var planPath, adaptersPath, fixturesRoot, artifactsRoot, executionTarget, passwordFile string
+	var planPath, adaptersPath, fixturesRoot, artifactsRoot, executionTarget, passwordFile, providerEnvPath string
 	var config benchmark.RunConfig
 	flags.StringVar(&planPath, "plan", "", "saved benchmark plan JSON")
 	flags.StringVar(&adaptersPath, "adapters", "", "adapter catalog JSON")
@@ -879,6 +973,7 @@ func execute(args []string, command string) error {
 	flags.StringVar(&config.NNTPUsername, "username", "", "NNTP username")
 	flags.StringVar(&config.NNTPPassword, "password", "", "NNTP password")
 	flags.StringVar(&passwordFile, "password-file", "", "file containing the NNTP password")
+	flags.StringVar(&providerEnvPath, "provider-env", "", "real provider .env (NNTP_HOST, NNTP_PORT, NNTP_TLS, NNTP_USERNAME, NNTP_PASSWORD, NNTP_CONNECTIONS); replaces the NNTP flags")
 	flags.IntVar(&config.Connections, "connections", 8, "identical NNTP connection limit per client")
 	flags.StringVar(&config.Profile, "profile", "", "must match the profile persisted in the plan (defaults to that profile)")
 	timeoutDescription := "per-run client timeout"
@@ -894,6 +989,12 @@ func execute(args []string, command string) error {
 		return err
 	}
 	config.NNTPPassword = password
+	var provider *benchmark.ProviderEnv
+	if providerEnvPath != "" {
+		if provider, err = applyProviderEnv(flags, &config, providerEnvPath); err != nil {
+			return err
+		}
+	}
 	if planPath == "" || adaptersPath == "" || fixturesRoot == "" || artifactsRoot == "" {
 		return fmt.Errorf("--plan, --adapters, --fixtures-root, and --artifacts are required")
 	}
@@ -904,6 +1005,11 @@ func execute(args []string, command string) error {
 	config.Plan = plan
 	config.Catalog = catalog
 	config.Target = benchmark.ExecutionTarget(executionTarget)
+	if provider != nil {
+		if err := checkProviderPlan(plan, *provider); err != nil {
+			return err
+		}
+	}
 	// Adapters run with the suite's artifact directory as their working
 	// directory, so a relative fixtures root would be resolved from there and
 	// point at nothing; the operator's path is anchored to this process's cwd.
@@ -1055,6 +1161,7 @@ Commands:
   chain          Drive a whole declared session: shaper, phases and summaries
   summarize      Produce paired per-stratum statistics from verified sequential artifacts
   preflight      Check a host: target, client executables, and a raw stack
+  import-nzb     Make a fixture from an NZB posted on a real provider
   verify-output  Verify a client completion directory against fixture hashes
   delete-output  Empty a verified client completion directory
 

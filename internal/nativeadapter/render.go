@@ -39,7 +39,7 @@ func renderProduct(cfg Config) (productSpec, error) {
 	default:
 		return productSpec{}, fmt.Errorf("unsupported client %q", cfg.Client)
 	}
-	spec.Rendered = renderAuditConfig(cfg, spec)
+	spec.Rendered = benchmark.RedactSecret(renderAuditConfig(cfg, spec), cfg.NNTPPassword)
 	digest := sha256.Sum256(canonicalizeSandboxPaths(cfg, spec.Rendered))
 	spec.ConfigSHA256 = hex.EncodeToString(digest[:])
 	return spec, nil
@@ -230,9 +230,9 @@ func renderSABnzbd(cfg Config, directUnpack bool) productSpec {
 		// SABnzbd's own default for a newly added server (5.0 and later).
 		"pipelining_requests = 2",
 		"ssl = " + ssl,
-		// Native SAB follows the same explicitly labelled local TLS policy as
-		// Docker. No result may claim CA verification for this product.
-		"ssl_verify = 0",
+		// Native SAB follows the same explicitly labelled TLS policy as
+		// Docker: off against the lab CA, strict against a real provider.
+		"ssl_verify = " + sabnzbdSSLVerify(cfg.TLSValidation),
 		"",
 	}, "\n")
 	return productSpec{
@@ -304,6 +304,27 @@ func bundledUnpacker(goos, directory, name string) (string, bool) {
 	return candidate, true
 }
 
+// sabnzbdSSLVerify renders SABnzbd's certificate policy: off against the lab
+// CA, which the plan labels as unverified, and 3, SAB's strictest check,
+// against a real provider's public certificate.
+func sabnzbdSSLVerify(validation benchmark.TLSValidation) string {
+	if validation == benchmark.TLSPublicRoots {
+		return "3"
+	}
+	return "0"
+}
+
+// NZBGetCertStore is the public CA bundle a native NZBGet verifies a real
+// provider against. The macOS and Windows packages both ship cacert.pem beside
+// the daemon, and that is the bundle the product is built to use.
+// NATIVE_NZBGET_CERT_STORE names another one.
+func NZBGetCertStore(program string) string {
+	if override := strings.TrimSpace(os.Getenv("NATIVE_NZBGET_CERT_STORE")); override != "" {
+		return override
+	}
+	return filepath.Join(filepath.Dir(program), "cacert.pem")
+}
+
 func executableName(goos, name string) string {
 	if goos == "windows" && filepath.Ext(name) == "" {
 		return name + ".exe"
@@ -323,9 +344,14 @@ func renderNZBGet(cfg Config, directUnpack bool) productSpec {
 	certCheck := "no"
 	if cfg.NNTPUseTLS {
 		encryption = "yes"
-		if cfg.TLSValidation == benchmark.TLSCAVerified {
+		switch cfg.TLSValidation {
+		case benchmark.TLSCAVerified:
 			verification = "strict"
 			certStore = cfg.NNTPCAFile
+			certCheck = "yes"
+		case benchmark.TLSPublicRoots:
+			verification = "strict"
+			certStore = NZBGetCertStore(program)
 			certCheck = "yes"
 		}
 	}
