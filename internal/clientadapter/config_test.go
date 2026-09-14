@@ -68,6 +68,8 @@ func TestWeaverUsesOneShotCLIWithTelemetryAcknowledgement(t *testing.T) {
 func TestWeaverQueueUsesServiceAndPreservesControllerOwnership(t *testing.T) {
 	t.Setenv("WEAVER_NNTP_TLS_BACKEND", "s2n")
 	t.Setenv("RUST_LOG", "weaver_nntp=debug")
+	t.Setenv("WEAVER_PROFILE_HOT_PATHS", "1")
+	t.Setenv("RARPAR_BENCH_PHASES", "1")
 	t.Setenv("WEAVER_STARTUP_IOPS", "12345")
 	cfg := testConfig(t, benchmark.Weaver, benchmark.Plaintext, benchmark.TLSNotApplicable)
 	cfg.QueueInput = &benchmark.QueueInput{
@@ -100,6 +102,11 @@ func TestWeaverQueueUsesServiceAndPreservesControllerOwnership(t *testing.T) {
 	}
 	if !strings.Contains(environment, "RUST_LOG=weaver_nntp=debug") {
 		t.Fatalf("queue Weaver environment lacks diagnostic log filter: %s", environment)
+	}
+	for _, expected := range []string{"WEAVER_PROFILE_HOT_PATHS=1", "RARPAR_BENCH_PHASES=1"} {
+		if !strings.Contains(environment, expected) {
+			t.Fatalf("queue Weaver environment lacks profiler switch %q: %s", expected, environment)
+		}
 	}
 	if !strings.Contains(environment, "WEAVER_STARTUP_IOPS=12345") {
 		t.Fatalf("queue Weaver environment lacks the operator IOPS override: %s", environment)

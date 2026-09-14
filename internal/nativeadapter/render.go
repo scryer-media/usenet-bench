@@ -163,12 +163,7 @@ func renderWeaver(cfg Config) productSpec {
 	// The native launcher inherits the controller environment, so these would
 	// reach Weaver anyway; rendering them explicitly keeps the audit record
 	// identical to the Docker lane, which lists every effective product setting.
-	if tlsBackend := os.Getenv("WEAVER_NNTP_TLS_BACKEND"); tlsBackend != "" {
-		env = append(env, "WEAVER_NNTP_TLS_BACKEND="+tlsBackend)
-	}
-	if rustLog := os.Getenv("RUST_LOG"); rustLog != "" {
-		env = append(env, "RUST_LOG="+rustLog)
-	}
+	env = append(env, benchmark.WeaverDiagnosticOverrides()...)
 	// Match the Docker lane: pin the startup random-read IOPS so Weaver skips
 	// its startup disk probe (a write + fsync + random-read burst that would
 	// otherwise run inside the measured native process lifetime and vary with

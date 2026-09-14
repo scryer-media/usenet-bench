@@ -46,6 +46,8 @@ func TestWeaverRenderUsesServiceLaunchAndStockExtractionDefault(t *testing.T) {
 func TestWeaverRenderMirrorsDockerOperatorOverridesIntoTheAuditRecord(t *testing.T) {
 	t.Setenv("WEAVER_NNTP_TLS_BACKEND", "s2n")
 	t.Setenv("RUST_LOG", "weaver_nntp=debug")
+	t.Setenv("WEAVER_PROFILE_HOT_PATHS", "1")
+	t.Setenv("RARPAR_BENCH_PHASES", "1")
 	t.Setenv("WEAVER_STARTUP_IOPS", "12345")
 	cfg := testConfig(benchmark.Weaver)
 	cfg.LaunchCommand = []string{"weaver", "--config", "{{config_dir}}", "serve", "--port", "{{api_port}}"}
@@ -57,6 +59,8 @@ func TestWeaverRenderMirrorsDockerOperatorOverridesIntoTheAuditRecord(t *testing
 	for _, expected := range []string{
 		"WEAVER_NNTP_TLS_BACKEND=s2n",
 		"RUST_LOG=weaver_nntp=debug",
+		"WEAVER_PROFILE_HOT_PATHS=1",
+		"RARPAR_BENCH_PHASES=1",
 		"WEAVER_STARTUP_IOPS=12345",
 	} {
 		if !strings.Contains(environment, expected) {

@@ -441,15 +441,10 @@ func renderWeaver(c Config, _ bool) ProductSpec {
 	if c.Transport == benchmark.TLS && c.TLSValidation == benchmark.TLSCAVerified {
 		env = append(env, "WEAVER_SERVER_1_TLS_CA_CERT=/benchmark-ca/nntp-ca.pem")
 	}
-	// Keep the selected TLS implementation visible in the rendered product
-	// environment when an operator explicitly supplies one for a diagnostic.
-	// Normal benchmark runs leave this unset and use the product default.
-	if tlsBackend := os.Getenv("WEAVER_NNTP_TLS_BACKEND"); tlsBackend != "" {
-		env = append(env, "WEAVER_NNTP_TLS_BACKEND="+tlsBackend)
-	}
-	if rustLog := os.Getenv("RUST_LOG"); rustLog != "" {
-		env = append(env, "RUST_LOG="+rustLog)
-	}
+	// Diagnostic switches (TLS implementation, log filter, profilers) reach
+	// the container only when an operator sets them on the adapter; normal
+	// benchmark runs leave them unset and use the product defaults.
+	env = append(env, benchmark.WeaverDiagnosticOverrides()...)
 	// Pin the startup random-read IOPS so the server skips its startup disk
 	// probe — a 4 MB write + fsync + 200 random preads that otherwise lands
 	// inside the measured process lifetime and varies with the bench host's
