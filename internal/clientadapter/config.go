@@ -268,8 +268,11 @@ func (c Config) Validate() error {
 			return fmt.Errorf("plaintext runs must report not_applicable TLS validation and plaintext label")
 		}
 	} else {
-		if c.TLSValidation != benchmark.TLSCAVerified && c.TLSValidation != benchmark.TLSDisabled {
+		if !c.TLSValidation.ValidForTLS() {
 			return fmt.Errorf("TLS run has unsupported TLS validation %q", c.TLSValidation)
+		}
+		if (c.TLSValidation == benchmark.TLSPublicRoots) != (c.ServerLink.ID == benchmark.LinkExternal) {
+			return fmt.Errorf("TLS validation %q does not belong on the %q link; public_roots is for a real provider only", c.TLSValidation, c.ServerLink.ID)
 		}
 		if c.TLSValidation == benchmark.TLSDisabled && c.Client != benchmark.SABnzbd {
 			return fmt.Errorf("only SABnzbd may run with TLS validation disabled")
@@ -386,7 +389,7 @@ func (c Config) RenderProductConfig() (ProductSpec, error) {
 		return ProductSpec{}, fmt.Errorf("unsupported client %q", c.Client)
 	}
 	spec.NeedsCAMount = c.Transport == benchmark.TLS && c.TLSValidation == benchmark.TLSCAVerified
-	spec.Rendered = renderAuditConfig(c, spec)
+	spec.Rendered = benchmark.RedactSecret(renderAuditConfig(c, spec), c.NNTPPassword)
 	digest := sha256.Sum256(spec.Rendered)
 	spec.ConfigSHA256 = hex.EncodeToString(digest[:])
 	return spec, nil
@@ -421,13 +424,6 @@ func renderWeaver(c Config, _ bool) ProductSpec {
 		"WEAVER_SERVER_1_PASSWORD=" + c.NNTPPassword,
 		"WEAVER_SERVER_1_CONNECTIONS=" + strconv.Itoa(c.Connections),
 		"WEAVER_SERVER_1_ACTIVE=true",
-		// A server added through Weaver's UI is probed for CAPABILITIES and
-		// records whether it advertises PIPELINING; an environment-seeded
-		// server is never probed and would stay sequential on every
-		// connection. The benchmark server advertises PIPELINING (see the
-		// server topology), so the flag is seeded the way the probe would
-		// have set it. Weaver 0.10.3 or newer; older images reject the field.
-		"WEAVER_SERVER_1_PIPELINING=true",
 		// Weaver's first-run access policy hands an anonymous browser session
 		// only to peers on its trusted-network list; without one, an install
 		// with no login serves a setup notice and refuses every GraphQL call.
@@ -445,15 +441,10 @@ func renderWeaver(c Config, _ bool) ProductSpec {
 	if c.Transport == benchmark.TLS && c.TLSValidation == benchmark.TLSCAVerified {
 		env = append(env, "WEAVER_SERVER_1_TLS_CA_CERT=/benchmark-ca/nntp-ca.pem")
 	}
-	// Keep the selected TLS implementation visible in the rendered product
-	// environment when an operator explicitly supplies one for a diagnostic.
-	// Normal benchmark runs leave this unset and use the product default.
-	if tlsBackend := os.Getenv("WEAVER_NNTP_TLS_BACKEND"); tlsBackend != "" {
-		env = append(env, "WEAVER_NNTP_TLS_BACKEND="+tlsBackend)
-	}
-	if rustLog := os.Getenv("RUST_LOG"); rustLog != "" {
-		env = append(env, "RUST_LOG="+rustLog)
-	}
+	// Diagnostic switches (TLS implementation, log filter, profilers) reach
+	// the container only when an operator sets them on the adapter; normal
+	// benchmark runs leave them unset and use the product defaults.
+	env = append(env, benchmark.WeaverDiagnosticOverrides()...)
 	// Pin the startup random-read IOPS so the server skips its startup disk
 	// probe — a 4 MB write + fsync + 200 random preads that otherwise lands
 	// inside the measured process lifetime and varies with the bench host's
@@ -496,6 +487,19 @@ func renderWeaver(c Config, _ bool) ProductSpec {
 	}
 }
 
+// sabnzbdSSLVerify renders SABnzbd's certificate policy. Against the lab
+// server verification stays off, as the plan labels it: SAB's local CA support
+// is not reliable in this harness, so verified TLS is never claimed for it
+// there. Against a real provider SAB checks the certificate against the trust
+// store it ships with at its strictest setting, 3, so a result labelled
+// public_roots never rests on a weaker check than the other clients make.
+func sabnzbdSSLVerify(validation benchmark.TLSValidation) string {
+	if validation == benchmark.TLSPublicRoots {
+		return "3"
+	}
+	return "0"
+}
+
 func renderSABnzbd(c Config, directUnpack bool) ProductSpec {
 	ssl := "0"
 	if c.NNTPUseTLS {
@@ -533,10 +537,7 @@ func renderSABnzbd(c Config, directUnpack bool) ProductSpec {
 		// SABnzbd's own default for a newly added server (5.0 and later).
 		"pipelining_requests = 2",
 		"ssl = " + ssl,
-		// This is intentional and policy-labelled by the plan. SAB's local CA
-		// support is not reliable in this harness, so verified TLS is never
-		// claimed for SABnzbd.
-		"ssl_verify = 0",
+		"ssl_verify = " + sabnzbdSSLVerify(c.TLSValidation),
 		"",
 	}, "\n")
 	environment := linuxServerEnvironment()
@@ -554,6 +555,11 @@ func renderSABnzbd(c Config, directUnpack bool) ProductSpec {
 // `7z` happens to come first on PATH inside the image.
 const nzbgetSevenZipCommand = "/usr/bin/7zz"
 
+// nzbgetImageCertStore is the public CA bundle the LinuxServer images carry
+// from their Alpine base. CLIENT_NZBGET_CERT_STORE overrides it for an image
+// that keeps its bundle elsewhere.
+const nzbgetImageCertStore = "/etc/ssl/certs/ca-certificates.crt"
+
 func renderNZBGet(c Config, directUnpack bool) ProductSpec {
 	encryption := "no"
 	verification := "none"
@@ -561,9 +567,16 @@ func renderNZBGet(c Config, directUnpack bool) ProductSpec {
 	certCheck := "no"
 	if c.NNTPUseTLS {
 		encryption = "yes"
-		if c.TLSValidation == benchmark.TLSCAVerified {
+		switch c.TLSValidation {
+		case benchmark.TLSCAVerified:
 			verification = "strict"
 			certStore = "/benchmark-ca/nntp-ca.pem"
+			certCheck = "yes"
+		case benchmark.TLSPublicRoots:
+			// NZBGet verifies nothing without a certificate store, and the
+			// image's own is the public bundle its distribution ships.
+			verification = "strict"
+			certStore = defaultString(os.Getenv("CLIENT_NZBGET_CERT_STORE"), nzbgetImageCertStore)
 			certCheck = "yes"
 		}
 	}
@@ -573,9 +586,19 @@ func renderNZBGet(c Config, directUnpack bool) ProductSpec {
 	}
 	// DirectWrite (writing decoded articles straight into the destination
 	// file instead of per-article temp files) is NZBGet's shipping default and
-	// is independent of direct unpack, so it stays on in both profiles; the
-	// profiles differ only in DirectUnpack.
+	// is independent of direct unpack, so it stays on in both profiles.
 	const directWrite = "yes"
+	// PostStrategy is always stated: left out, NZBGet falls back to its
+	// built-in "sequential", which post-processes one finished job at a time
+	// and is not what it ships ("balanced" in its own nzbget.conf). A queue
+	// drain then times that serial post-processing queue rather than the
+	// client. Stock keeps the shipped value; equivalent throughput uses
+	// "rocket", NZBGet's most concurrent post-processing, alongside direct
+	// unpack.
+	postStrategy := "balanced"
+	if directUnpack {
+		postStrategy = "rocket"
+	}
 	unpack := "yes"
 	parRepair := "yes"
 	unrarCommand := "unrar"
@@ -600,6 +623,7 @@ func renderNZBGet(c Config, directUnpack bool) ProductSpec {
 		"OutputMode=log",
 		"DirectWrite=" + directWrite,
 		"DirectUnpack=" + direct,
+		"PostStrategy=" + postStrategy,
 		"ParCheck=auto",
 		"ParRepair=" + parRepair,
 		"Unpack=" + unpack,

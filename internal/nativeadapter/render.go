@@ -39,7 +39,7 @@ func renderProduct(cfg Config) (productSpec, error) {
 	default:
 		return productSpec{}, fmt.Errorf("unsupported client %q", cfg.Client)
 	}
-	spec.Rendered = renderAuditConfig(cfg, spec)
+	spec.Rendered = benchmark.RedactSecret(renderAuditConfig(cfg, spec), cfg.NNTPPassword)
 	digest := sha256.Sum256(canonicalizeSandboxPaths(cfg, spec.Rendered))
 	spec.ConfigSHA256 = hex.EncodeToString(digest[:])
 	return spec, nil
@@ -150,10 +150,6 @@ func renderWeaver(cfg Config) productSpec {
 		"WEAVER_SERVER_1_PASSWORD=" + cfg.NNTPPassword,
 		"WEAVER_SERVER_1_CONNECTIONS=" + strconv.Itoa(cfg.Connections),
 		"WEAVER_SERVER_1_ACTIVE=true",
-		// Seeded servers are never probed for CAPABILITIES; the benchmark
-		// server advertises PIPELINING, so the flag is seeded the way the
-		// probe would have set it (Weaver 0.10.3 or newer).
-		"WEAVER_SERVER_1_PIPELINING=true",
 		// A fresh native install trusts no peer until its first-run wizard is
 		// completed from the machine's own browser; loopback is offered the
 		// wizard, not a session. Pinning loopback as trusted from the
@@ -167,12 +163,7 @@ func renderWeaver(cfg Config) productSpec {
 	// The native launcher inherits the controller environment, so these would
 	// reach Weaver anyway; rendering them explicitly keeps the audit record
 	// identical to the Docker lane, which lists every effective product setting.
-	if tlsBackend := os.Getenv("WEAVER_NNTP_TLS_BACKEND"); tlsBackend != "" {
-		env = append(env, "WEAVER_NNTP_TLS_BACKEND="+tlsBackend)
-	}
-	if rustLog := os.Getenv("RUST_LOG"); rustLog != "" {
-		env = append(env, "RUST_LOG="+rustLog)
-	}
+	env = append(env, benchmark.WeaverDiagnosticOverrides()...)
 	// Match the Docker lane: pin the startup random-read IOPS so Weaver skips
 	// its startup disk probe (a write + fsync + random-read burst that would
 	// otherwise run inside the measured native process lifetime and vary with
@@ -230,9 +221,9 @@ func renderSABnzbd(cfg Config, directUnpack bool) productSpec {
 		// SABnzbd's own default for a newly added server (5.0 and later).
 		"pipelining_requests = 2",
 		"ssl = " + ssl,
-		// Native SAB follows the same explicitly labelled local TLS policy as
-		// Docker. No result may claim CA verification for this product.
-		"ssl_verify = 0",
+		// Native SAB follows the same explicitly labelled TLS policy as
+		// Docker: off against the lab CA, strict against a real provider.
+		"ssl_verify = " + sabnzbdSSLVerify(cfg.TLSValidation),
 		"",
 	}, "\n")
 	return productSpec{
@@ -304,6 +295,27 @@ func bundledUnpacker(goos, directory, name string) (string, bool) {
 	return candidate, true
 }
 
+// sabnzbdSSLVerify renders SABnzbd's certificate policy: off against the lab
+// CA, which the plan labels as unverified, and 3, SAB's strictest check,
+// against a real provider's public certificate.
+func sabnzbdSSLVerify(validation benchmark.TLSValidation) string {
+	if validation == benchmark.TLSPublicRoots {
+		return "3"
+	}
+	return "0"
+}
+
+// NZBGetCertStore is the public CA bundle a native NZBGet verifies a real
+// provider against. The macOS and Windows packages both ship cacert.pem beside
+// the daemon, and that is the bundle the product is built to use.
+// NATIVE_NZBGET_CERT_STORE names another one.
+func NZBGetCertStore(program string) string {
+	if override := strings.TrimSpace(os.Getenv("NATIVE_NZBGET_CERT_STORE")); override != "" {
+		return override
+	}
+	return filepath.Join(filepath.Dir(program), "cacert.pem")
+}
+
 func executableName(goos, name string) string {
 	if goos == "windows" && filepath.Ext(name) == "" {
 		return name + ".exe"
@@ -323,9 +335,14 @@ func renderNZBGet(cfg Config, directUnpack bool) productSpec {
 	certCheck := "no"
 	if cfg.NNTPUseTLS {
 		encryption = "yes"
-		if cfg.TLSValidation == benchmark.TLSCAVerified {
+		switch cfg.TLSValidation {
+		case benchmark.TLSCAVerified:
 			verification = "strict"
 			certStore = cfg.NNTPCAFile
+			certCheck = "yes"
+		case benchmark.TLSPublicRoots:
+			verification = "strict"
+			certStore = NZBGetCertStore(program)
 			certCheck = "yes"
 		}
 	}
@@ -335,9 +352,19 @@ func renderNZBGet(cfg Config, directUnpack bool) productSpec {
 	}
 	// DirectWrite (writing decoded articles straight into the destination
 	// file instead of per-article temp files) is NZBGet's shipping default and
-	// is independent of direct unpack, so it stays on in both profiles; the
-	// profiles differ only in DirectUnpack.
+	// is independent of direct unpack, so it stays on in both profiles.
 	const directWrite = "yes"
+	// PostStrategy is always stated: left out, NZBGet falls back to its
+	// built-in "sequential", which post-processes one finished job at a time
+	// and is not what it ships ("balanced" in its own nzbget.conf). A queue
+	// drain then times that serial post-processing queue rather than the
+	// client. Stock keeps the shipped value; equivalent throughput uses
+	// "rocket", NZBGet's most concurrent post-processing, alongside direct
+	// unpack.
+	postStrategy := "balanced"
+	if directUnpack {
+		postStrategy = "rocket"
+	}
 	content := strings.Join([]string{
 		"MainDir=" + cfg.ConfigDir,
 		"DestDir=" + cfg.OutputDir,
@@ -354,6 +381,7 @@ func renderNZBGet(cfg Config, directUnpack bool) productSpec {
 		"OutputMode=log",
 		"DirectWrite=" + directWrite,
 		"DirectUnpack=" + direct,
+		"PostStrategy=" + postStrategy,
 		"ParCheck=auto",
 		"ParRepair=yes",
 		"Unpack=yes",

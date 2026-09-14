@@ -388,6 +388,11 @@ func verifyQueueTransitionOutputs(fixtureDir, outputDir string, copies int) ([]O
 	if err != nil {
 		return nil, -1, err
 	}
+	if manifest.External != nil {
+		// Copies of one external post extract identical names, and a pin is
+		// taken from a single output; neither survives a transition's copies.
+		return nil, -1, fmt.Errorf("%s is an external post; queue-transition verifies generated fixtures only", manifest.Case.ID)
+	}
 	actual, err := discoverFiles(outputDir)
 	if err != nil {
 		return nil, -1, err
@@ -445,6 +450,7 @@ func executeQueueSuite(parent context.Context, config RunConfig, suite queueSuit
 		return artifact
 	}
 	defer func() {
+		scrubRunDirectory(config, suiteDir, &artifact.Status, &artifact.Error)
 		persistQueueArtifact(filepath.Join(suiteDir, "queue.json"), &artifact)
 	}()
 	outputDir := filepath.Join(suiteDir, "downloads", "complete")

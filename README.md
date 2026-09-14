@@ -853,10 +853,8 @@ the measured round trip, SABnzbd 5 sends the two requests per connection its
 own new-server default declares, and NZBGet sends one request per connection.
 A server that stays silent therefore benches every client one article per
 round trip and hides exactly the difference a shaped round trip exists to
-show. The Weaver adapters seed the server's pipelining flag from the
-environment (`WEAVER_SERVER_1_PIPELINING=true`, Weaver 0.10.3 or newer),
-because an environment-seeded server is never probed the way a server added
-through Weaver's UI is.
+show. The Weaver adapters never set Weaver's pipelining flag; Weaver finds out
+whether a server pipelines on its own, as it does for any server it is given.
 
 #### Fixed round trip
 
@@ -1065,9 +1063,11 @@ and NZBGet are compared at their best, with direct unpack on, rather than at
 their shipping defaults. `--profile stock` remains a valid plan for a
 diagnostic and is reported separately when it is run; neither profile is a
 fallback for the other. The profiles differ only for
-SABnzbd (`direct_unpack`) and NZBGet (`DirectUnpack`); NZBGet's `DirectWrite`
-is its shipping default and independent of direct unpack, so it stays `yes`
-in both. Weaver is rendered with `WEAVER_DIRECT_UNPACK=on` and
+SABnzbd (`direct_unpack`) and NZBGet (`DirectUnpack`, and `PostStrategy`:
+`rocket` under equivalent throughput, the shipped `balanced` under stock, so a
+queue drain never waits on NZBGet's built-in one-job-at-a-time `sequential`
+fallback); NZBGet's `DirectWrite` is its shipping default and independent of
+direct unpack, so it stays `yes` in both. Weaver is rendered with `WEAVER_DIRECT_UNPACK=on` and
 `WEAVER_CLEANUP_AFTER_EXTRACT=true` in both, because those are its shipping
 defaults and the benchmark measures the product as shipped (every client
 deletes its archive volumes after a successful unpack), so the Weaver column
@@ -2105,6 +2105,107 @@ See [`configs/clients/baseline.json`](configs/clients/baseline.json) for the
 cross-client baseline and
 [`configs/adapters.example.json`](configs/adapters.example.json) for the
 digest-pinned catalog shape.
+
+## Real provider lane
+
+Every other lane measures against the local `e2e-nntp` server through a shaper
+whose link is declared and attested. The external stack instead downloads a
+post that already exists on a real Usenet provider, over the internet, with the
+same three clients, the same adapters and the same verification. It answers a
+different question — how the clients behave against a production server and a
+real path — and its results are never pooled with a shaped lane's: the run's
+link is recorded as `external` (scope `external_provider`), which nothing else
+produces.
+
+### Import the post
+
+A posted NZB becomes a fixture with `import-nzb`. Every file's size is read from
+its yEnc subject, and the import refuses an NZB whose segment counts do not
+match the article size it is imported at, so the phase's stratum is proven
+rather than assumed. SABnzbd's public 1 GB test post was split at Nyuu's default
+700 KiB articles, which is the `700k` stratum:
+
+```bash
+bin/nntpbench import-nzb --nzb test_download_1000MB.nzb \
+  --id sab-test-1000mb --fixtures-root fixtures-external \
+  --article-size 700k --class headline \
+  --description "SABnzbd public 1 GB test download"
+```
+
+The fixture directory is created once and never overwritten.
+
+### Pinned output
+
+The payload of someone else's post is unknown until it is downloaded, so an
+imported manifest expects no files. The first run that finishes pins its output
+beside the manifest as `expected-output.json` — only the files the client
+extracted (at least 1 MiB, not hidden, and not a file the post itself carried),
+hashed with BLAKE3 — and every later run, whichever client, must reproduce it
+exactly. The pin is written with exclusive creation and is never replaced; to
+re-pin, move it aside deliberately. A run's verification records whether it
+matched a pin (`pinned`) or wrote it (`pinned-here`).
+
+### Provider settings
+
+The provider lives in a `.env` beside the chain config (`provider_env`,
+default `.env`); [`.env.example`](.env.example) lists the keys:
+
+| Key | Meaning |
+| --- | --- |
+| `NNTP_HOST` | Provider host name, required |
+| `NNTP_TLS` | Implicit TLS, default `true`; the external stack refuses `false` |
+| `NNTP_PORT` | Default 563 with TLS |
+| `NNTP_USERNAME`, `NNTP_PASSWORD` | Both or neither |
+| `NNTP_CONNECTIONS` | Required; every client gets exactly this many |
+
+An unknown or repeated key is an error, and on macOS and Linux a file readable
+by other users is refused (`chmod 600 runs/.env`). The file is gitignored.
+The external stack refuses every setting that would name a second provider —
+`nntp_host`, ports, `username`, `password_file`, `ca_file`, `connections` —
+and each phase gets only `--provider-env <path>` on its command line.
+
+TLS is validated against public roots (`tls-public-roots`): Weaver uses its
+bundled web PKI roots, SABnzbd runs with `ssl_verify = 3`, and NZBGet checks
+certificates strictly against its own store — the `cacert.pem` shipped beside
+the macOS daemon (`NATIVE_NZBGET_CERT_STORE` overrides it) or
+`/etc/ssl/certs/ca-certificates.crt` in the Docker image
+(`CLIENT_NZBGET_CERT_STORE`). No CA file is involved. Before building plans,
+the chain opens one TLS connection with the host's trust store and reads the
+greeting; it never logs in.
+
+### The password
+
+Clients write the provider password into their configuration, state and
+sometimes logs, and those are kept as run evidence. The rendered audit
+configuration is recorded with the password replaced by `<redacted>` (and
+hashed in that form, so two accounts produce one configuration digest), and
+when a run ends every file under its run or suite directory, except the
+downloads, has each occurrence overwritten in place with the same number of
+`*` bytes. The one exposure left is the Docker target: a container's
+environment is passed on the `docker run` command line, so the password is
+visible in the host's process list while a run is starting. Use a native target
+or a host no one else is logged in to.
+
+### Run it
+
+```bash
+cp .env.example runs/.env && chmod 600 runs/.env   # then fill it in
+cp configs/chains/real-usenet.example.json runs/real-usenet.json
+bin/nntpbench chain --config runs/real-usenet.json --dry-run
+bin/nntpbench chain --config runs/real-usenet.json
+```
+
+The example measures `sab-test-1000mb` over TLS, three repetitions per client.
+The target defaults to the host's native target on macOS and Windows and to
+`docker-linux` elsewhere.
+
+### What it cannot control
+
+The internet path, the provider's load and its caches change between runs, and
+nothing attests them. The plan's randomized, blocked order spreads that drift
+across clients rather than removing it; treat a ratio from this lane as a
+measurement of that session, repeat it at different times before relying on a
+difference, and never compare its absolute times with a shaped lane's.
 
 ## What this does not claim
 

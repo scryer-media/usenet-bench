@@ -46,6 +46,8 @@ func TestWeaverRenderUsesServiceLaunchAndStockExtractionDefault(t *testing.T) {
 func TestWeaverRenderMirrorsDockerOperatorOverridesIntoTheAuditRecord(t *testing.T) {
 	t.Setenv("WEAVER_NNTP_TLS_BACKEND", "s2n")
 	t.Setenv("RUST_LOG", "weaver_nntp=debug")
+	t.Setenv("WEAVER_PROFILE_HOT_PATHS", "1")
+	t.Setenv("RARPAR_BENCH_PHASES", "1")
 	t.Setenv("WEAVER_STARTUP_IOPS", "12345")
 	cfg := testConfig(benchmark.Weaver)
 	cfg.LaunchCommand = []string{"weaver", "--config", "{{config_dir}}", "serve", "--port", "{{api_port}}"}
@@ -57,6 +59,8 @@ func TestWeaverRenderMirrorsDockerOperatorOverridesIntoTheAuditRecord(t *testing
 	for _, expected := range []string{
 		"WEAVER_NNTP_TLS_BACKEND=s2n",
 		"RUST_LOG=weaver_nntp=debug",
+		"WEAVER_PROFILE_HOT_PATHS=1",
+		"RARPAR_BENCH_PHASES=1",
 		"WEAVER_STARTUP_IOPS=12345",
 	} {
 		if !strings.Contains(environment, expected) {
@@ -84,7 +88,7 @@ func TestNativeSABAndNZBGetRenderEquivalentThroughputSettings(t *testing.T) {
 			if client == benchmark.SABnzbd && !strings.Contains(content, "direct_unpack = 1") {
 				t.Fatalf("SAB config lacks direct unpack:\n%s", content)
 			}
-			if client == benchmark.NZBGet && (!strings.Contains(content, "DirectWrite=yes") || !strings.Contains(content, "DirectUnpack=yes")) {
+			if client == benchmark.NZBGet && (!strings.Contains(content, "DirectWrite=yes") || !strings.Contains(content, "DirectUnpack=yes") || !strings.Contains(content, "PostStrategy=rocket")) {
 				t.Fatalf("NZBGet config lacks direct settings:\n%s", content)
 			}
 		})
@@ -284,5 +288,35 @@ func testConfig(client benchmark.Client) Config {
 		LaunchCommand:    []string{"client", "--config", "{{config_dir}}"},
 		APIEndpoint:      "http://127.0.0.1:18080",
 		ClientVersion:    "test",
+	}
+}
+
+func TestNativePublicRootsTLSValidatesAgainstEachClientsOwnStore(t *testing.T) {
+	store := filepath.Join(t.TempDir(), "cacert.pem")
+	t.Setenv("NATIVE_NZBGET_CERT_STORE", store)
+	for _, client := range []benchmark.Client{benchmark.SABnzbd, benchmark.NZBGet} {
+		cfg := testConfig(client)
+		cfg.Transport = benchmark.TLS
+		cfg.NNTPUseTLS = true
+		cfg.TLSValidation = benchmark.TLSPublicRoots
+		cfg.TransportLabel = "tls-public-roots"
+		cfg.NNTPPassword = "provider-secret"
+		spec, err := renderProduct(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		content := string(spec.Content)
+		want := []string{"ssl_verify = 3"}
+		if client == benchmark.NZBGet {
+			want = []string{"Server1.CertVerification=strict", "CertStore=" + store, "CertCheck=yes"}
+		}
+		for _, expected := range want {
+			if !strings.Contains(content, expected) {
+				t.Fatalf("%s config lacks %q:\n%s", client, expected, content)
+			}
+		}
+		if strings.Contains(string(spec.Rendered), "provider-secret") {
+			t.Fatalf("%s audit config keeps the provider password:\n%s", client, spec.Rendered)
+		}
 	}
 }

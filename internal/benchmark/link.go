@@ -7,6 +7,13 @@ import (
 
 const serverAggregateEgressScope = "server_aggregate_egress"
 
+// externalProviderScope marks a link the benchmark neither built nor shapes:
+// the public internet between the host and a real Usenet provider. Its rate
+// and round trip are whatever the path offered while the run was measured, so
+// the profile records none, and its distinct scope keeps its results from ever
+// pairing with a lab link's.
+const externalProviderScope = "external_provider"
+
 // ServerLinkProfile is a physical-link simulation imposed before the NNTP
 // response reaches a client. It is deliberately server aggregate, never a
 // per-client throttle: every connection competes for the same declared link.
@@ -53,6 +60,9 @@ const (
 	Link1Gbit     = "1gbit"
 	Link10Gbit    = "10gbit"
 	LinkCustom    = "custom"
+	// LinkExternal is a real provider reached over the internet. Only the
+	// external chain stack declares it, and nothing shapes it.
+	LinkExternal = "external"
 )
 
 func DefaultServerLinkProfile() ServerLinkProfile {
@@ -73,6 +83,9 @@ func ResolveServerLinkProfile(id string, egressBitsPerSecond, burstBytes, rttMic
 	}
 	if err := ValidateServerRTT(time.Duration(rttMicros) * time.Microsecond); err != nil {
 		return ServerLinkProfile{}, err
+	}
+	if profile.ID == LinkExternal && rttMicros != 0 {
+		return ServerLinkProfile{}, fmt.Errorf("the external link is not shaped and cannot add a round trip")
 	}
 	profile.RTTMicros = rttMicros
 	return profile, nil
@@ -97,6 +110,11 @@ func resolveServerLinkRate(id string, egressBitsPerSecond, burstBytes uint64) (S
 			return ServerLinkProfile{}, fmt.Errorf("10gbit link profile has fixed rate and burst; use custom to override")
 		}
 		return profile, nil
+	case LinkExternal:
+		if egressBitsPerSecond != 0 || burstBytes != 0 {
+			return ServerLinkProfile{}, fmt.Errorf("the external link is not shaped and cannot set a rate or burst")
+		}
+		return ServerLinkProfile{ID: LinkExternal, Scope: externalProviderScope}, nil
 	case LinkCustom:
 		if egressBitsPerSecond == 0 || burstBytes == 0 {
 			return ServerLinkProfile{}, fmt.Errorf("custom link profile requires positive egress bits per second and burst bytes")
@@ -120,8 +138,12 @@ func (p ServerLinkProfile) RTT() time.Duration {
 }
 
 func (p ServerLinkProfile) Validate() error {
-	if p.Scope != serverAggregateEgressScope {
-		return fmt.Errorf("server link profile %q must use %q scope", p.ID, serverAggregateEgressScope)
+	scope := serverAggregateEgressScope
+	if p.ID == LinkExternal {
+		scope = externalProviderScope
+	}
+	if p.Scope != scope {
+		return fmt.Errorf("server link profile %q must use %q scope", p.ID, scope)
 	}
 	resolved, err := ResolveServerLinkProfile(p.ID, 0, 0, p.RTTMicros)
 	if p.ID == LinkCustom {

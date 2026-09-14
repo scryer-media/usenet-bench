@@ -7,7 +7,7 @@ import (
 
 func TestArticleProfilesAreOrderedAndResolvable(t *testing.T) {
 	ids := ArticleProfileIDs()
-	if len(ids) != 2 || ids[0] != Article384K || ids[1] != Article750K {
+	if len(ids) != 3 || ids[0] != Article384K || ids[1] != Article700K || ids[2] != Article750K {
 		t.Fatalf("ArticleProfileIDs() = %v, want the strata in ascending byte order", ids)
 	}
 	for _, id := range ids {

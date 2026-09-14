@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "name": "weaver-real-usenet-sabtest",
+  "stack": "external",
+  "provider_env": ".env",
+  "adapters": "adapters.macos.json",
+  "artifacts_dir": "series-real-usenet",
+  "require": {
+    "fixture_roots": [
+      "../fixtures-external"
+    ]
+  },
+  "phases": [
+    {
+      "name": "R-sabtest-tls",
+      "mode": "sequential",
+      "plan": "plan-R-sabtest-tls.json",
+      "fixtures_root": "../fixtures-external",
+      "artifacts": "artifacts-R-sabtest-tls",
+      "server_link": "external",
+      "summarize_baselines": [
+        "sabnzbd",
+        "nzbget"
+      ],
+      "article_size": "700k",
+      "plan_spec": {
+        "fixtures": [
+          "sab-test-1000mb"
+        ],
+        "clients": [
+          "weaver",
+          "sabnzbd",
+          "nzbget"
+        ],
+        "transports": [
+          "tls"
+        ],
+        "profile": "equivalent-throughput",
+        "repetitions": 3,
+        "seed": 20260913
+      }
+    }
+  ]
+}
