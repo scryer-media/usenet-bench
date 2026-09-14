@@ -434,7 +434,7 @@ func expandCommand(command []string, cfg Config) []string {
 }
 
 func renderAuditConfig(cfg Config, spec productSpec) []byte {
-	env := append([]string(nil), spec.Environment...)
+	env := effectiveNativeEnvironment(spec)
 	sortStrings(env)
 	command, _ := json.Marshal(spec.Command)
 	return []byte(strings.Join([]string{

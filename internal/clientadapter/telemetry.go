@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"math"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -60,7 +63,17 @@ func (sampler cpuSampler) measureFrom(ctx context.Context, start cpuSnapshot) be
 }
 
 func (sampler cpuSampler) read(ctx context.Context) (cpuSnapshot, error) {
-	output, err := sampler.docker.run(ctx, "exec", sampler.name, "cat", "/sys/fs/cgroup/cpu.stat")
+	// Read the host's cgroup directly: docker exec would charge the probe's
+	// own CPU to the workload. A remote daemon is explicitly unavailable here.
+	group, err := sampler.docker.containerControllerCgroup(ctx, sampler.name, "cpuacct")
+	if err != nil {
+		return cpuSnapshot{}, fmt.Errorf("external cgroup accounting unavailable: %w", err)
+	}
+	if !filepath.IsLocal(group) {
+		return cpuSnapshot{}, fmt.Errorf("invalid cgroup path")
+	}
+	raw, err := os.ReadFile(filepath.Join("/sys/fs/cgroup", group, "cpu.stat"))
+	output := string(raw)
 	if err == nil {
 		usageUsec, parseErr := parseCgroupV2CPU(output)
 		if parseErr == nil {
@@ -70,7 +83,8 @@ func (sampler cpuSampler) read(ctx context.Context) (cpuSnapshot, error) {
 			return cpuSnapshot{nanoseconds: usageUsec * 1_000, collector: "cgroup-v2-cpu.stat", version: "cgroup-v2"}, nil
 		}
 	}
-	output, fallbackErr := sampler.docker.run(ctx, "exec", sampler.name, "cat", "/sys/fs/cgroup/cpuacct/cpuacct.usage")
+	raw, fallbackErr := os.ReadFile(filepath.Join("/sys/fs/cgroup/cpuacct", group, "cpuacct.usage"))
+	output = string(raw)
 	if fallbackErr == nil {
 		usageNanos, parseErr := parseCgroupV1CPU(output)
 		if parseErr == nil {
@@ -106,6 +120,9 @@ func parseCgroupV1CPU(contents string) (uint64, error) {
 }
 
 type instructionRecorder struct {
+	control          *os.File
+	ack              *os.File
+	synchronized     bool
 	cmd              *exec.Cmd
 	output           bytes.Buffer
 	scope            string
@@ -136,16 +153,58 @@ func startInstructionRecorder(ctx context.Context, cfg Config, container *runnin
 		return &instructionRecorder{scope: scope, collector: collector, collectorVersion: "linux-perf", unavailable: err.Error()}
 	}
 	version := perfVersion(ctx, cfg.PerfBinary)
-	command := exec.Command(cfg.PerfBinary, "stat", "--no-big-num", "-x;", "-a", "-e", "instructions", "-G", cgroup)
+	controlRead, controlWrite, err := os.Pipe()
+	if err != nil {
+		return unavailableInstructionRecorder(err.Error())
+	}
+	ackRead, ackWrite, err := os.Pipe()
+	if err != nil {
+		_ = controlRead.Close()
+		_ = controlWrite.Close()
+		return unavailableInstructionRecorder(err.Error())
+	}
+	defer controlRead.Close()
+	defer ackWrite.Close()
+	command := exec.Command(cfg.PerfBinary, "stat", "--no-big-num", "-x;", "-a", "-e", "instructions", "-G", cgroup, "--delay=-1", "--control=fd:3,4")
+	command.ExtraFiles = []*os.File{controlRead, ackWrite}
 	command.Env = append(os.Environ(), "LC_ALL=C")
-	recorder := &instructionRecorder{cmd: command, scope: scope, collector: collector, collectorVersion: version}
+	recorder := &instructionRecorder{cmd: command, scope: scope, collector: collector, collectorVersion: version, control: controlWrite, ack: ackRead}
 	command.Stdout = &recorder.output
 	command.Stderr = &recorder.output
 	if err := command.Start(); err != nil {
+		_ = controlWrite.Close()
+		_ = ackRead.Close()
 		recorder.cmd = nil
 		recorder.unavailable = "could not start perf instruction counter: " + err.Error()
+	} else if err := recorder.controlCommand("enable"); err != nil {
+		recorder.unavailable = "perf readiness was not acknowledged: " + err.Error()
+	} else {
+		recorder.synchronized = true
 	}
 	return recorder
+}
+
+func (recorder *instructionRecorder) controlCommand(command string) error {
+	if recorder.control == nil || recorder.ack == nil {
+		return fmt.Errorf("missing perf control pipes")
+	}
+	if err := recorder.control.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(recorder.control, command+"\n"); err != nil {
+		return err
+	}
+	if err := recorder.ack.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		return err
+	}
+	var ack [4]byte
+	if _, err := io.ReadFull(recorder.ack, ack[:]); err != nil {
+		return err
+	}
+	if string(ack[:]) != "ack\n" {
+		return fmt.Errorf("invalid perf acknowledgement")
+	}
+	return nil
 }
 
 func (recorder *instructionRecorder) finish() benchmark.CounterMeasurement {
@@ -159,6 +218,17 @@ func (recorder *instructionRecorder) finish() benchmark.CounterMeasurement {
 		return benchmark.UnavailableMeasurement(scope, collector, defaultString(recorder.collectorVersion, "unavailable"), reason)
 	}
 	if recorder.cmd.Process != nil {
+		if recorder.synchronized {
+			if err := recorder.controlCommand("disable"); err != nil {
+				recorder.unavailable = "perf stop was not acknowledged: " + err.Error()
+			}
+		}
+		if recorder.control != nil {
+			_ = recorder.control.Close()
+		}
+		if recorder.ack != nil {
+			_ = recorder.ack.Close()
+		}
 		_ = recorder.cmd.Process.Signal(os.Interrupt)
 	}
 	wait := make(chan error, 1)
@@ -169,6 +239,9 @@ func (recorder *instructionRecorder) finish() benchmark.CounterMeasurement {
 		<-wait
 		return benchmark.UnavailableMeasurement(scope, collector, recorder.collectorVersion, "perf did not stop within five seconds")
 	case waitErr := <-wait:
+		if recorder.unavailable != "" {
+			return benchmark.UnavailableMeasurement(scope, collector, recorder.collectorVersion, recorder.unavailable)
+		}
 		value, parseErr := parsePerfInstructions(recorder.output.String())
 		if parseErr == nil {
 			// perf may use a non-zero status for the intentional SIGINT while
@@ -196,21 +269,39 @@ func perfVersion(ctx context.Context, binary string) string {
 }
 
 func parsePerfInstructions(contents string) (uint64, error) {
+	var result uint64
+	found := false
 	for _, line := range strings.Split(contents, "\n") {
 		parts := strings.Split(line, ";")
 		if len(parts) < 3 || strings.TrimSpace(parts[2]) != "instructions" {
 			continue
+		}
+		if found {
+			return 0, fmt.Errorf("perf reported ambiguous duplicate instructions counters")
 		}
 		value := strings.TrimSpace(parts[0])
 		if value == "" || strings.HasPrefix(value, "<") {
 			return 0, fmt.Errorf("perf reported retired instructions as %q", value)
 		}
 		value = strings.ReplaceAll(value, ",", "")
+		// perf CSV reports event runtime then percentage of enabled time.
+		// Missing or multiplexed counts are not exact retired instructions.
+		if len(parts) < 5 {
+			return 0, fmt.Errorf("perf omitted enabled/running coverage")
+		}
+		runtime, runErr := strconv.ParseFloat(strings.TrimSpace(parts[3]), 64)
+		coverage, coverageErr := strconv.ParseFloat(strings.TrimSpace(parts[4]), 64)
+		if runErr != nil || coverageErr != nil || !(runtime > 0) || math.IsInf(runtime, 0) || coverage != 100 {
+			return 0, fmt.Errorf("perf instructions were unmeasured or multiplexed")
+		}
 		parsed, err := strconv.ParseUint(value, 10, 64)
 		if err != nil {
 			return 0, fmt.Errorf("parse perf retired instructions: %w", err)
 		}
-		return parsed, nil
+		result, found = parsed, true
+	}
+	if found {
+		return result, nil
 	}
 	return 0, fmt.Errorf("perf did not report an instructions counter")
 }

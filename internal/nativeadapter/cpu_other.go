@@ -30,3 +30,5 @@ func (processStateCPU) measurement(state *os.ProcessState) benchmark.CounterMeas
 }
 
 func (processStateCPU) close() {}
+
+func resumeAccountedProcess(*os.Process) error { return nil }

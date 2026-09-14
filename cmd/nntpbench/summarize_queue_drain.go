@@ -15,7 +15,7 @@ import (
 // identical submissions, timed from the first submission to the moment the
 // last copy's output has been independently verified. There is no per-job
 // score and no pairing; each lane is one observation of one client's queue.
-const QueueDrainMetric = "first_submission_to_last_verified_terminal_output"
+const QueueDrainMetric = "first_submission_to_last_observed_terminal_verified_output"
 
 type queueDrainReport struct {
 	SchemaVersion int              `json:"schema_version"`
@@ -33,6 +33,7 @@ type queueDrainLane struct {
 	TransportLabel   string                     `json:"transport_label"`
 	Profile          string                     `json:"profile"`
 	FixtureID        string                     `json:"fixture_id"`
+	FixtureName      string                     `json:"fixture_name"`
 	Copies           int                        `json:"copies"`
 	ServerLinkID     string                     `json:"server_link_id"`
 	ServerRTTMicros  uint64                     `json:"server_rtt_micros"`
@@ -43,11 +44,13 @@ type queueDrainLane struct {
 	// drain time: a queue with a copy that did not finish has no "last
 	// verified output" to time to, so its wall clocks are omitted and the
 	// recorded failure is reported instead.
-	Status                       string `json:"status"`
-	QueueWallClockNanoseconds    int64  `json:"queue_wall_clock_nanoseconds,omitempty"`
-	VerifiedWallClockNanoseconds int64  `json:"verified_wall_clock_nanoseconds,omitempty"`
-	CopiesDidNotFinish           int    `json:"copies_did_not_finish"`
-	Error                        string `json:"error,omitempty"`
+	Status                         string `json:"status"`
+	QueueWallClockNanoseconds      int64  `json:"queue_wall_clock_nanoseconds,omitempty"`
+	VerifiedWallClockNanoseconds   int64  `json:"verified_wall_clock_nanoseconds,omitempty"`
+	VerificationElapsedNanoseconds int64  `json:"verification_elapsed_nanoseconds"`
+	HarnessElapsedNanoseconds      int64  `json:"harness_elapsed_nanoseconds"`
+	CopiesDidNotFinish             int    `json:"copies_did_not_finish"`
+	Error                          string `json:"error,omitempty"`
 }
 
 // loadQueueDrainReport reads a queue-transition artifact root, binds every
@@ -58,6 +61,7 @@ func loadQueueDrainReport(root string) (queueDrainReport, error) {
 		return queueDrainReport{}, err
 	}
 	report := queueDrainReport{SchemaVersion: 1, Metric: QueueDrainMetric}
+	seenRuns := make(map[string]bool, len(execution.PlannedRuns))
 	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -81,6 +85,12 @@ func loadQueueDrainReport(root string) (queueDrainReport, error) {
 			return fmt.Errorf("queue-drain artifact %s: %w", path, err)
 		}
 		report.Lanes = append(report.Lanes, lane)
+		for _, run := range artifact.Runs {
+			if seenRuns[run.ID] {
+				return fmt.Errorf("duplicate planned queue-drain run %s", run.ID)
+			}
+			seenRuns[run.ID] = true
+		}
 		return nil
 	})
 	if err != nil {
@@ -89,11 +99,20 @@ func loadQueueDrainReport(root string) (queueDrainReport, error) {
 	if len(report.Lanes) == 0 {
 		return queueDrainReport{}, fmt.Errorf("artifact root %s contains no queue-transition artifacts", root)
 	}
+	if len(seenRuns) != len(execution.PlannedRuns) {
+		return queueDrainReport{}, fmt.Errorf("incomplete queue-drain execution: found %d of %d planned runs", len(seenRuns), len(execution.PlannedRuns))
+	}
 	sort.Slice(report.Lanes, func(left, right int) bool { return report.Lanes[left].SuiteID < report.Lanes[right].SuiteID })
 	return report, nil
 }
 
 func queueDrainLaneFor(artifact benchmark.QueueArtifact, plannedRuns map[string]benchmark.Run) (queueDrainLane, error) {
+	if err := artifact.ValidateEvidence(); err != nil {
+		return queueDrainLane{}, err
+	}
+	if artifact.AdapterResult.QueueElapsedNanoseconds <= 0 || artifact.QueueWallClockNanoseconds != artifact.AdapterResult.QueueElapsedNanoseconds {
+		return queueDrainLane{}, fmt.Errorf("missing monotonic client drain duration")
+	}
 	if artifact.SchemaVersion != 8 {
 		return queueDrainLane{}, fmt.Errorf("uses queue artifact schema %d, want 8", artifact.SchemaVersion)
 	}
@@ -142,6 +161,7 @@ func queueDrainLaneFor(artifact benchmark.QueueArtifact, plannedRuns map[string]
 		TransportLabel:   first.TransportLabel,
 		Profile:          first.Profile,
 		FixtureID:        first.FixtureID,
+		FixtureName:      artifact.Jobs[0].Workload.Manifest.Case.DisplayName(),
 		Copies:           len(artifact.Runs),
 		ServerLinkID:     first.ServerLink.ID,
 		ServerRTTMicros:  first.ServerLink.RTTMicros,
@@ -172,5 +192,7 @@ func queueDrainLaneFor(artifact benchmark.QueueArtifact, plannedRuns map[string]
 	}
 	lane.QueueWallClockNanoseconds = artifact.QueueWallClockNanoseconds
 	lane.VerifiedWallClockNanoseconds = artifact.VerifiedWallClockNanoseconds
+	lane.VerificationElapsedNanoseconds = artifact.VerificationElapsedNanoseconds
+	lane.HarnessElapsedNanoseconds = artifact.HarnessElapsedNanoseconds
 	return lane, nil
 }

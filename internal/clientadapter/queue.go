@@ -77,7 +77,7 @@ func runQueue(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	queueStartedAt := jobs[0].QueuedAt
+	queueStartedAt := jobs[0].SubmissionStartedAt
 	queueCompletedAt := jobs[0].CompletionAt
 	for _, job := range jobs[1:] {
 		if job.CompletionAt.After(queueCompletedAt) {
@@ -111,6 +111,7 @@ func runQueue(ctx context.Context, cfg Config) error {
 		StorageProfile:           cfg.StorageProfile,
 		QueueStartedAt:           queueStartedAt,
 		QueueCompletedAt:         queueCompletedAt,
+		QueueElapsedNanoseconds:  queueCompletedAt.Sub(queueStartedAt).Nanoseconds(),
 		StatusPollIntervalNanos:  cfg.PollInterval.Nanoseconds(),
 		Jobs:                     jobs,
 		ClientIdentity:           cfg.Image,
@@ -140,10 +141,8 @@ func runQueuedSubmission(ctx context.Context, api productAPI, interval, jobTimeo
 		monitorResult <- queueMonitorResult{jobs: jobs, err: err}
 	}()
 	for _, inputJob := range inputJobs {
-		// Round(0) strips the monotonic reading so every duration derived here is
-		// computed from the same wall-clock values the JSON artifact carries; the
-		// controller recomputes them from that JSON and demands equality.
-		submissionStartedAt := time.Now().Round(0)
+		// Elapsed measurements retain Go's monotonic clock; JSON timestamps are annotations.
+		submissionStartedAt := time.Now()
 		jobID, err := api.queue(ctx, inputJob.NZBPath, inputJob.ArchivePassword, queueOptions{
 			submissionName: inputJob.SubmissionName,
 			forceAccept:    inputJob.ForceAccept,
@@ -152,7 +151,7 @@ func runQueuedSubmission(ctx context.Context, api productAPI, interval, jobTimeo
 			cancelMonitor()
 			return nil, fmt.Errorf("queue %s: %w", inputJob.RunID, err)
 		}
-		acceptedAt := time.Now().Round(0)
+		acceptedAt := time.Now()
 		registrations <- queuedJob{result: benchmark.QueueJobResult{
 			RunID:               inputJob.RunID,
 			JobID:               jobID,
@@ -171,9 +170,9 @@ func runQueuedSubmission(ctx context.Context, api productAPI, interval, jobTimeo
 
 func runSequentialSubmission(ctx context.Context, api productAPI, interval time.Duration, inputJobs []benchmark.QueueInputJob, cpu cpuSampler, cfg Config, container *runningContainer) ([]benchmark.QueueJobResult, error) {
 	jobs := make([]benchmark.QueueJobResult, 0, len(inputJobs))
-	for _, inputJob := range inputJobs {
-		cpuStart, cpuStartErr := cpu.read(ctx)
+	for jobIndex, inputJob := range inputJobs {
 		instructions := startInstructionRecorder(ctx, cfg, container)
+		cpuStart, cpuStartErr := cpu.read(ctx)
 		monitorCtx, cancelMonitor := context.WithCancel(ctx)
 		registrations := make(chan queuedJob, 1)
 		monitorResult := make(chan queueMonitorResult, 1)
@@ -181,7 +180,7 @@ func runSequentialSubmission(ctx context.Context, api productAPI, interval time.
 			observed, err := monitorQueue(monitorCtx, api, interval, cfg.JobTimeout, registrations)
 			monitorResult <- queueMonitorResult{jobs: observed, err: err}
 		}()
-		submissionStartedAt := time.Now().Round(0)
+		submissionStartedAt := time.Now()
 		jobID, err := api.queue(ctx, inputJob.NZBPath, inputJob.ArchivePassword, queueOptions{
 			submissionName: inputJob.SubmissionName,
 			forceAccept:    inputJob.ForceAccept,
@@ -191,7 +190,7 @@ func runSequentialSubmission(ctx context.Context, api productAPI, interval time.
 			_ = instructions.finish()
 			return nil, fmt.Errorf("queue %s: %w", inputJob.RunID, err)
 		}
-		acceptedAt := time.Now().Round(0)
+		acceptedAt := time.Now()
 		registrations <- queuedJob{result: benchmark.QueueJobResult{
 			RunID:               inputJob.RunID,
 			JobID:               jobID,
@@ -202,7 +201,6 @@ func runSequentialSubmission(ctx context.Context, api productAPI, interval time.
 		close(registrations)
 		monitored := <-monitorResult
 		cancelMonitor()
-		instructionMeasurement := instructions.finish()
 		var cpuMeasurement benchmark.CounterMeasurement
 		if cpuStartErr != nil {
 			cpuMeasurement = benchmark.UnavailableMeasurement("client_container", "cgroup-cpu", "unknown", cpuStartErr.Error())
@@ -211,6 +209,14 @@ func runSequentialSubmission(ctx context.Context, api productAPI, interval time.
 			cpuMeasurement = cpu.measureFrom(telemetryCtx, cpuStart)
 			cancelTelemetry()
 		}
+		instructionMeasurement := instructions.finish()
+		if raw := strings.TrimSpace(instructions.output.String()); raw != "" {
+			if err := writeNewFile(filepath.Join(cfg.ConfigDir, fmt.Sprintf("perf-job-%03d.txt", jobIndex+1)), []byte(raw+"\n")); err != nil {
+				return nil, err
+			}
+		}
+		cpuMeasurement.Window = "pre_submission_to_post_terminal"
+		instructionMeasurement.Window = "recorder_enabled_to_post_terminal"
 		if monitored.err != nil {
 			return nil, fmt.Errorf("monitor fixture %s lifecycle: %w", inputJob.RunID, monitored.err)
 		}
@@ -283,7 +289,8 @@ func monitorQueue(
 				return nil, fmt.Errorf("queue returned duplicate job id %s", registration.result.JobID)
 			}
 			seenIDs[registration.result.JobID] = true
-			jobs = append(jobs, &trackedQueueJob{result: registration.result, lastObservedAt: registration.result.AcceptedAt})
+			registration.result.TimingClock = "monotonic"
+			jobs = append(jobs, &trackedQueueJob{result: registration.result, lastObservedAt: registration.result.SubmissionStartedAt})
 		case <-ticker.C:
 			pendingIDs := make([]string, 0, len(jobs)-completed)
 			for _, job := range jobs {
@@ -294,11 +301,12 @@ func monitorQueue(
 			if len(pendingIDs) == 0 {
 				continue
 			}
+			requestStartedAt := time.Now()
 			observations, err := api.observe(ctx, pendingIDs)
 			if err != nil {
 				return nil, err
 			}
-			observedAt := time.Now().Round(0)
+			observedAt := time.Now()
 			for _, job := range jobs {
 				if job.complete {
 					continue
@@ -311,13 +319,13 @@ func monitorQueue(
 				case jobUnknown:
 					continue
 				case jobQueued:
-					job.lastObservedAt = observedAt
+					job.lastObservedAt = requestStartedAt
 					job.lastStatus = observation.status
 				case jobActive:
 					if job.result.ProcessingStartedAt.IsZero() {
 						job.result.ProcessingStartedAt = observedAt
 					}
-					job.lastObservedAt = observedAt
+					job.lastObservedAt = requestStartedAt
 					job.lastStatus = observation.status
 				case jobComplete:
 					job.result.TerminalStatus = "succeeded"

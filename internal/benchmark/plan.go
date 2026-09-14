@@ -303,6 +303,9 @@ func (p Plan) Validate() error {
 		transports[transport] = true
 	}
 	for index, run := range p.Runs {
+		if run.Repetition < 1 || run.Repetition > p.Repetitions {
+			return fmt.Errorf("run %s repetition %d is outside 1..%d", run.ID, run.Repetition, p.Repetitions)
+		}
 		if run.Order != index+1 || run.ID != fmt.Sprintf("run-%04d", index+1) {
 			return fmt.Errorf("benchmark plan has non-canonical run ordering at position %d", index+1)
 		}

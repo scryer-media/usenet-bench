@@ -28,6 +28,9 @@ type ExternalImport struct {
 	ArticleRawBytes int
 }
 
+// ExternalImportProducer names an imported post in its article attestation.
+const ExternalImportProducer = "external-import"
+
 // yencSubjectExpression reads the part count and file size a yEnc poster
 // writes at the end of every subject: `"name" yEnc (1/37) 26214400`.
 var yencSubjectExpression = regexp.MustCompile(`yEnc \((\d+)/(\d+)\) (\d+)\s*$`)
@@ -114,6 +117,12 @@ func ImportExternalNZB(request ExternalImport) (fixture.GeneratedManifest, error
 	// applies, so an import that succeeds is one a phase will accept.
 	loaded, err := fixture.LoadGeneratedManifest(filepath.Join(dir, "fixture-manifest.json"))
 	if err != nil {
+		return fixture.GeneratedManifest{}, err
+	}
+	// A seeded corpus records its article boundaries as it posts; an imported
+	// post records the same boundaries from the NZB, whose segment counts the
+	// subjects have already been checked against.
+	if err := WriteArticleAttestation(filepath.Join(dir, request.FixtureID+".nzb"), loaded, request.ArticleRawBytes, ExternalImportProducer); err != nil {
 		return fixture.GeneratedManifest{}, err
 	}
 	if err := AssertNZBArticleSize(filepath.Join(dir, request.FixtureID+".nzb"), loaded, request.ArticleRawBytes); err != nil {

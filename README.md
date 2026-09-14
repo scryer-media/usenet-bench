@@ -19,6 +19,11 @@ the source-locked toolchains, the NZB creation command, the rendered client
 configuration and the result schema. Generated archives, posted articles,
 downloaded data and run artifacts are ignored by git and never committed.
 
+For hostile-input testing, see the [adversarial suite](ADVERSARIAL.md): generated
+NZB, article, archive and PAR2 attack recipes, a scripted NNTP responder, and
+independent security/behavior comparison scoring. Run `go run ./cmd/adversarial
+list` for the executable catalog. Generated archives stay outside Git.
+
 ## Contents
 
 - [Requirements](#requirements)
@@ -1263,14 +1268,45 @@ transport, toolchain, server link, storage profile, article size). Every fixture
 equal weight — its paired log ratios are averaged first and the fixture means
 second — so a fixture that ran more blocks does not count for more, and the
 bootstrap resamples blocks within each fixture with the fixture set held
-fixed, because the corpus is a declared set and not a sample. The `headline`
-aggregate is the figure for the common case and the `breadth` aggregate the
-compatibility figure; they are never pooled with each other. A class figure is
+fixed, because the corpus is a declared set and not a sample. Both `headline`
+and `breadth` are coverage-balanced views of the declared corpus, not estimates
+of real-post frequencies; they are never pooled with each other. A class figure is
 withheld, naming the fixtures, whenever any fixture of the class had its own
-comparison withheld: a client that could not finish a fixture of the class
+comparison withheld or any DNF: a client that could not finish a fixture of the class
 does not get a class figure over the fixtures it did finish. An artifact whose
 job carries no `fixture_class` was run over a corpus that predates the classes
-and fails the summary closed.
+and fails the summary closed. Client/helper build identities and TLS policies
+must remain consistent across the fixtures contributing to a class aggregate.
+
+`subgroups` provides separate repair (`clean`, `repair_required`) and encryption
+views of each class/stratum. They retain their own failures and equal-fixture
+weighting. They are overlapping views, not additional independent samples.
+
+`timing_precision` expands ratio bounds using each observation's polling
+uncertainty. Runs shorter than 10 seconds are descriptive-only, and uncertainty
+above 1% prevents a directional precision conclusion. The practical equivalence
+band is ±2%; a within-session interval is not evidence of reproducibility across
+independent sessions, hosts or workloads.
+
+Use a separate exploratory pilot to select payload tiers before the final plan:
+
+```bash
+go run ./cmd/nntpbench size-pilot --artifacts /scratch/pilot/artifacts \
+  --target-duration 30s --maximum-payload-bytes 34359738368
+```
+
+This read-only command uses the fastest successful duration lower bound across
+clients, also targeting at most 1% observed timing uncertainty. It recommends
+power-of-two MiB payload tiers without shrinking a fixture. Failures, insufficient
+observations and the declared size ceiling are explicit, not discarded. Scaling
+is an estimate: preserve archive/layout/repair/encryption axes, generate the
+same selected size for every client, and confirm duration with another pilot.
+Never reuse pilot samples in the final score. Freeze separate randomized plans
+for independently started sessions; repetitions inside one process/session do
+not establish cross-session reproducibility. Capacity calibration, measured
+collector perturbation, cache-state controls and continuous host-load/power
+observations remain open items in `QUALITY-FIXES.md`; current summaries do not
+establish that the server/storage/collector was never the bottleneck.
 
 A harness-side `failed` suite, a missing or unverified run, an
 incomplete pair with no recorded failure, fewer than 20 paired blocks for any
@@ -1293,9 +1329,9 @@ where either counter is unavailable is dropped from the CPU pairing only. The
 comparison is withheld when the two clients were measured at different scopes
 (a `client_process` counter, a `client_process_tree` counter and a
 `client_container` counter are different quantities), when a client's counter
-source changes inside one stratum, or
-when fewer than two blocks pair; pairing fewer blocks than `--minimum-blocks`
-is stated under `caveats` rather than withheld. The NFS profiles' CPU
+source or measurement window changes inside one stratum, or
+when fewer than `--minimum-blocks` (and always at least two) blocks pair.
+The NFS profiles' CPU
 accounting caveat is carried under `caveats` too.
 
 Each stratum also carries `transfer`: per client, over its finished shaped
@@ -1309,6 +1345,22 @@ a spread is a finding, and the census says whether the excess was requested
 twice or read past.
 
 ## Driving a whole session
+
+Benchmarks have human-readable labels as well as stable machine IDs. List
+experiments without starting a service or checking a running client:
+
+```sh
+nntpbench list --chain configs/chains/latency-series.example.json
+nntpbench list --matrix fixtures/matrix.json
+```
+
+For example, `B3-rtt10` is displayed as “Mixed archive downloads · TLS ·
+matched throughput settings · 1 Gbit/s · 10ms round-trip latency · 750 KiB
+articles.” `display_name` supplies the experiment description; measured axes
+are appended from the configuration. IDs remain valid for `--only`, scripts
+and artifact paths. Saved phase results and fixture comparisons include names.
+Individual fixture names describe the container, writer, compression,
+encryption, repair, payload and layout rather than repeating an opaque ID.
 
 A published comparison is not one run. It is a series: several plans, each
 measured under its own link conditions, each summarized against both
@@ -1343,11 +1395,12 @@ container check on a stack that runs none.
 Each phase names its execution mode, its plan, its corpus, its artifact root
 and the `article_size` its corpus was seeded at, and declares the link
 conditions it must be measured under. The article size is declared rather than
-inferred, and it is checked: for every posted file the harness compares the
-article count the manifest implies at the declared size against the segment
-count in the seeded NZB, and a phase pointed at a corpus seeded for the other
-size fails by name before the shaper is touched. A phase that omits the field
-means `750k`, so an existing description keeps running unchanged. The chain
+inferred, and it is checked against the seeder's `.articles.json` attestation,
+which binds exact decoded boundaries, message IDs, manifest and NZB hashes.
+Counts alone are insufficient: two sizes can yield the same article count.
+Old corpora without this provenance must be reseeded. The attestation records
+poster inputs, not independent wire decoding. A phase that omits the field
+means `750k`. The chain
 reconfigures the shaper only when a phase's conditions differ from the phase
 before, and it restores a declared resting state when the session ends, so a
 finished session never leaves a rate limit or an injected round trip behind.
@@ -1772,6 +1825,17 @@ Notes for the native catalogs:
   use `{{config_dir}}`, `{{nzb_path}}`, `{{output_dir}}`, `{{fixture_dir}}` and
   `{{api_port}}`. Commands must stay in the foreground so the launcher can
   collect CPU time and stop them cleanly.
+- `NATIVE_IDENTITY_PATHS` optionally supplies a JSON array of absolute application
+  and runtime directories/files (at most 32 roots). It is required when launching
+  Python/PyPy/Node: declare the application and its interpreter/site-packages
+  runtime, not just the entry script. The identity inventory hashes the entry,
+  enclosing `.app` bundle, file arguments, discovered helpers, declared roots
+  and symlink targets; it excludes `.git` and `__pycache__`. It is bounded to
+  50,000 files, 100,000 entries and 4 GiB. The saved `software-identity.json`
+  explains the scope and binds the result's client identity. This is a declared
+  runtime inventory, not automatic proof of every dynamically loaded OS library.
+  Effective environment settings are hashed with per-run sandbox paths normalized;
+  ambient runtime-injection variables are excluded unless explicitly configured.
 - SABnzbd's frozen Windows build decides it was started as a Windows service
   whenever it finds itself in session 0 and then fails to reach the service
   controller. Every process an OpenSSH session starts is in session 0, so the
@@ -2021,27 +2085,26 @@ Per run the artifact records:
   state. `fixture_wall_clock_nanoseconds` (acceptance to terminal) and
   `processing_wall_clock_nanoseconds` (first observed active state to
   terminal) are secondary; a fixture that goes terminal before an active state
-  is ever observed invalidates the suite rather than reporting queue latency as
-  work. `status_poll_interval_nanoseconds` is the observation bound.
+  is ever observed cannot establish a processing-only duration. Primary elapsed
+  counters retain the monotonic clock before serialization. The terminal bound
+  runs from the start of the last nonterminal request to the terminal response;
+  the configured poll interval alone is not a measurement of that uncertainty.
 - Independent output verification — every expected file must pass size and
   BLAKE3 checks or the run is ineligible. Verification runs after both
   timestamps and is not charged to any product; its duration is recorded
   separately.
-- `cpu_time_nanoseconds` — Docker lane: the container cgroup CPU counter from
-  fresh-container creation to terminal (cold startup included, the Go
-  controller excluded). macOS lane: the launched process's user + system time
+- `cpu_time_nanoseconds` — Docker sequential lane: host-side cgroup reads
+  bracket submission and terminal observation, without executing probes inside
+  the measured container. CPU and perf teardown are separate. macOS lane:
+  the launched process's user + system time
   from its wait status (`client_process` scope; the BSD wait path folds in a
   child the client waited for, such as its unpacker), never promoted to a
   whole-tree value. Windows lane: the client is placed in a job object and the
-  counter is the sum of exact `QueryProcessCycleTime` counts over every
-  process that joined the job -- the unpackers included -- converted at the
-  processor's nominal clock (`client_process_tree` scope, collector
-  `windows-job-cycle-time`, collector version `nominal-<MHz>MHz`). Windows'
-  own user + kernel times are tick-sampled and charged a client paced by the
-  shaper's timer a fraction of what it used (31 ms against 1.4 billion cycles
-  for Weaver on the smoke fixture), so they are not recorded. Cycle time at
-  the nominal clock is exact as a ratio between clients on one host and
-  approximate as an absolute (boost runs above nominal). A member that exited
+  counter sums OS-accounted user + kernel durations from `GetProcessTimes`
+  over held process handles (`client_process_tree`, collector
+  `windows-job-process-times`). The process starts suspended, joins accounting,
+  then resumes. These durations can be coarse for short workloads; cycle counts
+  divided by nominal frequency are not CPU time. A member that exited
   before its handle could be held makes the counter unavailable with a reason
   rather than a smaller number. Do not divide this cold-scope counter by the
   narrower primary wall clock. Under the `nfs`
@@ -2058,7 +2121,9 @@ Per run the artifact records:
   `perf stat -a -G … -e instructions` over the same interval, raw output kept as
   `config/perf-instructions.txt`. Where `perf` cannot attach (Docker Desktop,
   most macOS setups) and on native lanes it is recorded as `unavailable` with a
-  reason — never as zero, never omitted.
+  reason — never as zero, never omitted. perf starts disabled, acknowledges
+  enable/disable commands, and must report full running coverage; missing or
+  multiplexed counts are unavailable. Per-job raw logs are retained.
 
 - `storage_profile` — where the client's intermediate and completion
   directories lived, with the link's fixed rate, burst and round trip. It is a

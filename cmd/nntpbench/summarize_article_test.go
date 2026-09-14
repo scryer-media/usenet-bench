@@ -21,6 +21,8 @@ func articleSummarySet(profile benchmark.ArticleProfile) []benchmark.QueueArtifa
 			}
 			for index := range artifact.Jobs {
 				artifact.Jobs[index].Run.ArticleProfile = profile
+				setSummaryArticleEvidence(artifact.Jobs[index].Workload, profile.RawBytes)
+				artifact.Jobs[index].WorkloadSHA256 = benchmark.EvidenceDigest(artifact.Jobs[index].Workload)
 			}
 			artifact.AdapterResult.ArticleProfile = profile
 			artifacts = append(artifacts, artifact)
@@ -76,6 +78,9 @@ func TestSummaryLabelsTheEncodingWithoutSplittingTheStratum(t *testing.T) {
 	for index := range artifacts {
 		for job := range artifacts[index].Jobs {
 			artifacts[index].Jobs[job].Encoding = fixture.UUEncodeEncoding
+			artifacts[index].Jobs[job].Workload.Manifest.Case.Encoding = fixture.UUEncodeEncoding
+			setSummaryArticleEvidence(artifacts[index].Jobs[job].Workload, artifacts[index].Jobs[job].Run.ArticleProfile.RawBytes)
+			artifacts[index].Jobs[job].WorkloadSHA256 = benchmark.EvidenceDigest(artifacts[index].Jobs[job].Workload)
 		}
 	}
 	report, err := buildSummaryReport(artifacts, nil, benchmark.Weaver, benchmark.SABnzbd, 20, 17, 1_000)

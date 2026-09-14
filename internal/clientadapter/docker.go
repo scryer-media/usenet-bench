@@ -222,6 +222,10 @@ func (d dockerClient) containerPID(ctx context.Context, name string) (int, error
 }
 
 func (d dockerClient) containerCgroup(ctx context.Context, name string) (string, error) {
+	return d.containerControllerCgroup(ctx, name, "perf_event")
+}
+
+func (d dockerClient) containerControllerCgroup(ctx context.Context, name, controller string) (string, error) {
 	pid, err := d.containerPID(ctx, name)
 	if err != nil {
 		return "", err
@@ -230,14 +234,44 @@ func (d dockerClient) containerCgroup(ctx context.Context, name string) (string,
 	if err != nil {
 		return "", fmt.Errorf("read client container cgroup: %w", err)
 	}
-	cgroup, err := parseContainerCgroup(string(contents))
+	cgroup, err := parseControllerCgroup(string(contents), controller)
 	if err != nil {
 		return "", fmt.Errorf("parse client container cgroup: %w", err)
+	}
+	// A remote daemon's PID may exist locally but belong to another process.
+	// Require the exact inspected container ID in the local cgroup path.
+	id, err := d.run(ctx, "inspect", "--format", "{{.Id}}", name)
+	if err != nil {
+		return "", fmt.Errorf("bind cgroup to container identity: %w", err)
+	}
+	if err := validateContainerCgroupIdentity(cgroup, strings.TrimSpace(id)); err != nil {
+		return "", err
 	}
 	return cgroup, nil
 }
 
 func parseContainerCgroup(contents string) (string, error) {
+	return parseControllerCgroup(contents, "perf_event")
+}
+
+func validateContainerCgroupIdentity(group, id string) error {
+	if len(id) != 64 || !filepath.IsLocal(group) {
+		return fmt.Errorf("container identity or cgroup path is invalid")
+	}
+	for _, r := range id {
+		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f') {
+			return fmt.Errorf("invalid container ID")
+		}
+	}
+	for _, part := range strings.Split(filepath.ToSlash(group), "/") {
+		if part == id || part == "docker-"+id+".scope" {
+			return nil
+		}
+	}
+	return fmt.Errorf("local cgroup does not belong to the inspected container; remote/namespaced CPU accounting is unavailable")
+}
+
+func parseControllerCgroup(contents, wanted string) (string, error) {
 	var perfEvent string
 	for _, line := range strings.Split(contents, "\n") {
 		fields := strings.SplitN(strings.TrimSpace(line), ":", 3)
@@ -252,7 +286,7 @@ func parseContainerCgroup(contents string) (string, error) {
 			return path, nil
 		}
 		for _, controller := range strings.Split(fields[1], ",") {
-			if controller == "perf_event" {
+			if controller == wanted {
 				perfEvent = path
 			}
 		}
@@ -260,7 +294,7 @@ func parseContainerCgroup(contents string) (string, error) {
 	if perfEvent != "" {
 		return perfEvent, nil
 	}
-	return "", fmt.Errorf("no non-root cgroup v2 or perf_event path found")
+	return "", fmt.Errorf("no non-root cgroup v2 or %s path found", wanted)
 }
 
 func (d dockerClient) containerRunning(ctx context.Context, name string) (bool, error) {

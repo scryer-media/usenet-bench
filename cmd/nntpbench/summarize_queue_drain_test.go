@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/scryer-media/usenet-bench/internal/benchmark"
+	"github.com/scryer-media/usenet-bench/internal/fixture"
 )
 
 func queueDrainTestArtifact(t *testing.T, copies int) (benchmark.QueueArtifact, map[string]benchmark.Run) {
@@ -27,7 +28,7 @@ func queueDrainTestArtifact(t *testing.T, copies int) (benchmark.QueueArtifact, 
 	for _, run := range plan.Runs {
 		planned[run.ID] = run
 	}
-	started := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	started := time.Unix(1700000000, 0)
 	completed := started.Add(90 * time.Second)
 	verified := completed.Add(2 * time.Second)
 	first := plan.Runs[0]
@@ -56,20 +57,24 @@ func queueDrainTestArtifact(t *testing.T, copies int) (benchmark.QueueArtifact, 
 			ArticleProfile:           first.ArticleProfile,
 			QueueStartedAt:           started,
 			QueueCompletedAt:         completed,
+			QueueElapsedNanoseconds:  completed.Sub(started).Nanoseconds(),
+			StatusPollIntervalNanos:  int64(100 * time.Millisecond),
+			ResourceMetrics:          *summaryUnavailableResources(),
 			ClientIdentity:           "sha256:test-weaver",
 			ClientVersion:            "test",
 			RenderedConfigSHA256:     strings.Repeat("a", 64),
 		},
 	}
 	for _, run := range plan.Runs {
-		job := benchmark.QueueJobResult{RunID: run.ID, TerminalStatus: "succeeded"}
+		base := summaryTestFixtureArtifact(run.FixtureID, fixture.HeadlineFixtureClass, run.Client, run.Repetition, int64(90*time.Second))
+		job := base.Jobs[0].AdapterResult
+		job.RunID = run.ID
+		job.ResourceMetrics = nil
 		artifact.AdapterResult.Jobs = append(artifact.AdapterResult.Jobs, job)
-		artifact.Jobs = append(artifact.Jobs, benchmark.QueueJobArtifact{
-			Run:           run,
-			Outcome:       "completed",
-			Verification:  &benchmark.OutputVerification{FixtureID: run.FixtureID},
-			AdapterResult: job,
-		})
+		jobArtifact := base.Jobs[0]
+		jobArtifact.Run = run
+		jobArtifact.AdapterResult = job
+		artifact.Jobs = append(artifact.Jobs, jobArtifact)
 	}
 	return artifact, planned
 }

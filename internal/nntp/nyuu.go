@@ -200,6 +200,9 @@ func SeedWithNyuu(ctx context.Context, config NyuuSeedConfig) (SeedResult, error
 	if articles == 0 {
 		return SeedResult{}, fmt.Errorf("Nyuu NZB contains no article segments")
 	}
+	if err := WriteArticleAttestation(nzbPath, manifest, config.SegmentBytes, config.Image); err != nil {
+		return SeedResult{}, err
+	}
 	return SeedResult{
 		FixtureID:        manifest.Case.ID,
 		NZBPath:          nzbPath,

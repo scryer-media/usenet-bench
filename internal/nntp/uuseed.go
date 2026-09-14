@@ -153,6 +153,9 @@ func SeedUUEncoded(ctx context.Context, config UUSeedConfig) (SeedResult, error)
 	if err := assertNZBFileOrder(document, plan.Order); err != nil {
 		return SeedResult{}, fmt.Errorf("NZB %s: %w", nzbPath, err)
 	}
+	if err := WriteArticleAttestation(nzbPath, manifest, config.ArticleBytes, "builtin-uuencode"); err != nil {
+		return SeedResult{}, err
+	}
 	return SeedResult{
 		FixtureID:    manifest.Case.ID,
 		NZBPath:      nzbPath,

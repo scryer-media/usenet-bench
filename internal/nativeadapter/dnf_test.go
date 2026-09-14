@@ -79,11 +79,10 @@ func TestARecordedFailureMustCarryItsReason(t *testing.T) {
 	}
 }
 
-// A job the adapter gave up waiting on has no terminal observation, so the
-// native lane reports it as an error rather than inventing a record.
-func TestTheNativeLaneRefusesATimedOutTerminalStatus(t *testing.T) {
+// Timeout is a bounded client outcome, not a missing harness run.
+func TestTheNativeLaneRecordsATimedOutTerminalStatus(t *testing.T) {
 	result := nativeSequentialResult("timed_out", "client job 42 did not reach a terminal state within 1h0m0s of acceptance")
-	if err := validateNativeSequentialQueueResult(result); err == nil {
-		t.Fatal("a timed-out job was accepted as a native sequential record")
+	if err := validateNativeSequentialQueueResult(result); err != nil {
+		t.Fatalf("timed-out job was not retained as a DNF: %v", err)
 	}
 }

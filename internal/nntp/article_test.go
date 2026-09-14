@@ -95,19 +95,19 @@ func articleSizeManifest(sizes map[string]int64, withheld string) fixture.Genera
 }
 
 func TestAssertNZBArticleSizeAcceptsTheDeclaredStratum(t *testing.T) {
-	// A 32 MiB volume is 44 articles at 750 KiB and 86 at 384 KiB, which is
-	// what makes the NZB's own segment counts sufficient proof.
+	// These sizes have different counts. Equal counts still require the
+	// exact seed attestation; a count alone is not proof of segmentation.
 	const volume = 32 << 20
 	manifest := articleSizeManifest(map[string]int64{"fixture.part01.rar": volume}, "")
 	large := writeArticleSizeNZB(t, map[string]int{"fixture.part01.rar": 44})
-	if err := AssertNZBArticleSize(large, manifest, 768000); err != nil {
+	if err := AssertNZBSegmentCount(large, manifest, 768000); err != nil {
 		t.Fatalf("a corpus seeded at 750 KiB was rejected: %v", err)
 	}
 	small := writeArticleSizeNZB(t, map[string]int{"fixture.part01.rar": 86})
-	if err := AssertNZBArticleSize(small, manifest, 393216); err != nil {
+	if err := AssertNZBSegmentCount(small, manifest, 393216); err != nil {
 		t.Fatalf("a corpus seeded at 384 KiB was rejected: %v", err)
 	}
-	err := AssertNZBArticleSize(large, manifest, 393216)
+	err := AssertNZBSegmentCount(large, manifest, 393216)
 	if err == nil || !strings.Contains(err.Error(), "seeded at a different article size") {
 		t.Fatalf("a 750 KiB corpus under a 384 KiB plan = %v, want a loud refusal", err)
 	}
@@ -122,7 +122,7 @@ func TestAssertNZBArticleSizeIgnoresWithheldFiles(t *testing.T) {
 	// actually given and must not be checked.
 	manifest := articleSizeManifest(map[string]int64{"fixture.part01.rar": 32 << 20}, "fixture.part02.rar")
 	path := writeArticleSizeNZB(t, map[string]int{"fixture.part01.rar": 44, "fixture.part02.rar": 7})
-	if err := AssertNZBArticleSize(path, manifest, 768000); err != nil {
+	if err := AssertNZBSegmentCount(path, manifest, 768000); err != nil {
 		t.Fatalf("a withheld file's segment count must not be checked: %v", err)
 	}
 }
@@ -130,7 +130,7 @@ func TestAssertNZBArticleSizeIgnoresWithheldFiles(t *testing.T) {
 func TestAssertNZBArticleSizeRefusesAMissingPostedFile(t *testing.T) {
 	manifest := articleSizeManifest(map[string]int64{"fixture.part01.rar": 32 << 20}, "")
 	path := writeArticleSizeNZB(t, map[string]int{"fixture.part09.rar": 44})
-	if err := AssertNZBArticleSize(path, manifest, 768000); err == nil || !strings.Contains(err.Error(), "does not list posted file") {
+	if err := AssertNZBSegmentCount(path, manifest, 768000); err == nil || !strings.Contains(err.Error(), "does not list posted file") {
 		t.Fatalf("error = %v, want a refusal naming the missing file", err)
 	}
 }

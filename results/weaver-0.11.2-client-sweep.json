@@ -29822,6 +29822,8 @@
   },
   {
    "id": "rar4-393-data-normal-solid-data-incompressible",
+   "display_name": "RAR4 · RAR 3.93 writer · normal compression · solid archive · encrypted contents",
+   "archive_writer": "rarlab-3.93",
    "category": "compressed-rar",
    "edge_case": true
   },
@@ -29842,6 +29844,8 @@
   },
   {
    "id": "rar4-data-normal-solid-data-incompressible",
+   "display_name": "RAR4 · RAR 4.20 writer · normal compression · solid archive · encrypted contents",
+   "archive_writer": "rarlab-4.20",
    "category": "compressed-rar",
    "edge_case": true
   },

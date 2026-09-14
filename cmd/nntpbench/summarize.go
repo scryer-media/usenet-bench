@@ -27,11 +27,14 @@ type summaryReport struct {
 	// number a reader may quote for the common case; the breadth aggregate
 	// is the compatibility figure. They are never pooled with each other.
 	Aggregates []classAggregate `json:"aggregates"`
+	Subgroups  []classAggregate `json:"subgroups"`
 }
 
 // aggregateStratum is comparisonStratum with the fixture replaced by its
 // class: the key under which per-fixture results may be pooled.
 type aggregateStratum struct {
+	GroupAxis        string                     `json:"group_axis,omitempty"`
+	GroupValue       string                     `json:"group_value,omitempty"`
 	FixtureClass     fixture.FixtureClass       `json:"fixture_class"`
 	Profile          string                     `json:"profile"`
 	ExecutionTarget  benchmark.ExecutionTarget  `json:"execution_target"`
@@ -74,6 +77,7 @@ func (s comparisonStratum) aggregateKey(class fixture.FixtureClass) aggregateStr
 // withheld: a client that could not finish a fixture of the class does not
 // get a class figure computed over the fixtures it did finish.
 type classAggregate struct {
+	Weighting         string                         `json:"weighting"`
 	Stratum           aggregateStratum               `json:"stratum"`
 	FixturesCompared  []string                       `json:"fixtures_compared"`
 	FixturesWithheld  []string                       `json:"fixtures_withheld,omitempty"`
@@ -121,7 +125,12 @@ type comparisonStratum struct {
 }
 
 type stratifiedComparison struct {
-	Stratum comparisonStratum `json:"stratum"`
+	DisplayName          string            `json:"display_name"`
+	FixtureName          string            `json:"fixture_name"`
+	TimingPrecision      timingPrecision   `json:"timing_precision"`
+	WorkloadSHA256       string            `json:"workload_sha256"`
+	InfrastructureSHA256 string            `json:"infrastructure_sha256"`
+	Stratum              comparisonStratum `json:"stratum"`
 	// FixtureClass is the class the fixture's manifest declared, and the key
 	// under which this comparison is pooled in Aggregates.
 	FixtureClass fixture.FixtureClass `json:"fixture_class"`
@@ -257,10 +266,12 @@ type clientTransportPolicy struct {
 }
 
 type comparisonBlock struct {
-	baseline     *float64
-	candidate    *float64
-	baselineDNF  bool
-	candidateDNF bool
+	baselineUncertainty  float64
+	candidateUncertainty float64
+	baseline             *float64
+	candidate            *float64
+	baselineDNF          bool
+	candidateDNF         bool
 	// baselineCPU and candidateCPU are the measured `cpu_time_nanoseconds`
 	// of the same two runs, nil when the lane recorded the counter as
 	// unavailable.
@@ -270,6 +281,7 @@ type comparisonBlock struct {
 
 // cpuProvenance is one client's CPU counter source inside a stratum.
 type cpuProvenance struct {
+	Window           string
 	Scope            string
 	Collector        string
 	CollectorVersion string
@@ -295,7 +307,7 @@ func cpuObservation(metrics *benchmark.ResourceMetrics) (*float64, cpuProvenance
 		return nil, cpuProvenance{}, "resource metrics not recorded for this run"
 	}
 	counter := metrics.CPUTimeNanoseconds
-	provenance := cpuProvenance{Scope: counter.Scope, Collector: counter.Collector, CollectorVersion: counter.CollectorVersion}
+	provenance := cpuProvenance{Window: counter.Window, Scope: counter.Scope, Collector: counter.Collector, CollectorVersion: counter.CollectorVersion}
 	if counter.Status != benchmark.CounterMeasured || counter.Value == nil {
 		reason := strings.TrimSpace(counter.Reason)
 		if reason == "" {
@@ -458,6 +470,7 @@ func loadSequentialArtifacts(root string) ([]benchmark.QueueArtifact, []benchmar
 		return nil, nil, err
 	}
 	plannedRuns := execution.PlannedRuns
+	seenRuns := make(map[string]bool, len(plannedRuns))
 	var artifacts []benchmark.QueueArtifact
 	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -476,6 +489,10 @@ func loadSequentialArtifacts(root string) ([]benchmark.QueueArtifact, []benchmar
 		}
 		if artifact.SubmissionMode == benchmark.SubmissionModeSequential {
 			for _, run := range artifact.Runs {
+				if seenRuns[run.ID] {
+					return fmt.Errorf("duplicate planned run %s", run.ID)
+				}
+				seenRuns[run.ID] = true
 				planned, ok := plannedRuns[run.ID]
 				if !ok || planned != run {
 					return fmt.Errorf("sequential artifact %s is not bound to the snapshotted plan", path)
@@ -493,6 +510,9 @@ func loadSequentialArtifacts(root string) ([]benchmark.QueueArtifact, []benchmar
 	}
 	if len(artifacts) == 0 {
 		return nil, nil, fmt.Errorf("artifact root %s contains no passed sequential queue artifacts", root)
+	}
+	if len(seenRuns) != len(plannedRuns) {
+		return nil, nil, fmt.Errorf("incomplete execution: found %d of %d planned runs; missing runs are not DNFs and full-corpus comparisons are withheld", len(seenRuns), len(plannedRuns))
 	}
 	return artifacts, execution.Exclusions, nil
 }
@@ -572,11 +592,20 @@ func loadSummaryExecutionContext(root, command string) (summaryExecutionContext,
 
 func buildSummaryReport(artifacts []benchmark.QueueArtifact, exclusions []benchmark.ClientExclusion, baseline, candidate benchmark.Client, minimumBlocks int, seed int64, resamples int) (summaryReport, error) {
 	groups := make(map[comparisonStratum]map[int]*comparisonBlock)
+	workloads := make(map[comparisonStratum]string)
+	infrastructures := make(map[comparisonStratum]string)
 	identities := make(map[summaryProductKey]summaryProductIdentity)
+	type aggregateProductKey struct {
+		Stratum aggregateStratum
+		Client  benchmark.Client
+	}
+	aggregateProducts := make(map[aggregateProductKey]summaryProductIdentity)
 	cpuAccounts := make(map[summaryProductKey]*cpuAccount)
 	cpuCaveats := make(map[comparisonStratum]map[string]bool)
 	transfers := make(map[summaryProductKey]*transferAccount)
 	classes := make(map[string]fixture.FixtureClass)
+	cases := make(map[string]fixture.ArchiveCase)
+	names := make(map[string]string)
 	encodings := make(map[string]fixture.PostEncoding)
 	// One summary describes one storage stratum. Local and NFS runs answer
 	// different questions, so a directory holding both is an operator mistake
@@ -584,6 +613,9 @@ func buildSummaryReport(artifacts []benchmark.QueueArtifact, exclusions []benchm
 	// like one report.
 	var storageProfile *benchmark.StorageProfile
 	for _, artifact := range artifacts {
+		if err := artifact.ValidateEvidence(); err != nil {
+			return summaryReport{}, fmt.Errorf("artifact %s: %w", artifact.SuiteID, err)
+		}
 		if artifact.SchemaVersion != 8 {
 			return summaryReport{}, fmt.Errorf("summary input %s uses queue artifact schema %d, want 8", artifact.SuiteID, artifact.SchemaVersion)
 		}
@@ -597,7 +629,7 @@ func buildSummaryReport(artifacts []benchmark.QueueArtifact, exclusions []benchm
 			return summaryReport{}, fmt.Errorf("sequential artifact %s contains %d jobs, want exactly one", artifact.SuiteID, len(artifact.Jobs))
 		}
 		job := artifact.Jobs[0]
-		if len(artifact.Runs) != 1 || artifact.Runs[0].ID != job.Run.ID || artifact.AdapterResult.SuiteID != artifact.SuiteID || len(artifact.AdapterResult.Jobs) != 1 || artifact.AdapterResult.Jobs[0].RunID != job.Run.ID || !reflect.DeepEqual(artifact.AdapterResult.Jobs[0], job.AdapterResult) {
+		if len(artifact.Runs) != 1 || artifact.Runs[0] != job.Run || artifact.AdapterResult.SuiteID != artifact.SuiteID || len(artifact.AdapterResult.Jobs) != 1 || artifact.AdapterResult.Jobs[0].RunID != job.Run.ID || !reflect.DeepEqual(artifact.AdapterResult.Jobs[0], job.AdapterResult) {
 			return summaryReport{}, fmt.Errorf("sequential artifact %s has inconsistent run or adapter-result identity", artifact.SuiteID)
 		}
 		if artifact.AdapterResult.Client != job.Run.Client || artifact.AdapterResult.ArchiveToolchain != job.Run.ArchiveToolchain || artifact.AdapterResult.ExecutionTarget != job.Run.ExecutionTarget || artifact.AdapterResult.Transport != job.Run.Transport || artifact.AdapterResult.TLSValidation != job.Run.TLSValidation || artifact.AdapterResult.TransportLabel != job.Run.TransportLabel || artifact.AdapterResult.ServerLink != job.Run.ServerLink || artifact.AdapterResult.StorageProfile != job.Run.StorageProfile || artifact.AdapterResult.ArticleProfile != job.Run.ArticleProfile {
@@ -649,6 +681,15 @@ func buildSummaryReport(artifacts []benchmark.QueueArtifact, exclusions []benchm
 			ArticleProfileID: job.Run.ArticleProfile.ID,
 			ArticleRawBytes:  job.Run.ArticleProfile.RawBytes,
 		}
+		if previous, ok := workloads[stratum]; ok && previous != job.WorkloadSHA256 {
+			return summaryReport{}, fmt.Errorf("fixture %s mixes immutable workload identities", job.Run.FixtureID)
+		}
+		workloads[stratum] = job.WorkloadSHA256
+		infrastructure := artifact.InfrastructureDigest()
+		if previous, ok := infrastructures[stratum]; ok && previous != infrastructure {
+			return summaryReport{}, fmt.Errorf("fixture %s mixes infrastructure identities", job.Run.FixtureID)
+		}
+		infrastructures[stratum] = infrastructure
 		if len(artifact.AdapterResult.RenderedConfigSHA256) != 64 {
 			return summaryReport{}, fmt.Errorf("sequential artifact %s lacks a rendered-config SHA-256", artifact.SuiteID)
 		}
@@ -662,6 +703,11 @@ func buildSummaryReport(artifacts []benchmark.QueueArtifact, exclusions []benchm
 			return summaryReport{}, fmt.Errorf("fixture %s is recorded as both %q and %q across artifacts", job.Run.FixtureID, previous, job.FixtureClass)
 		}
 		classes[job.Run.FixtureID] = job.FixtureClass
+		if previous, ok := cases[job.Run.FixtureID]; ok && previous != job.Workload.Manifest.Case {
+			return summaryReport{}, fmt.Errorf("fixture %s changed its declared workload axes", job.Run.FixtureID)
+		}
+		cases[job.Run.FixtureID] = job.Workload.Manifest.Case
+		names[job.Run.FixtureID] = job.Workload.Manifest.Case.DisplayName()
 		// Encoding is a label, not a key: a uuencoded fixture is its own
 		// fixture and so already has its own stratum. Carrying it here is what
 		// lets a reader see "this client did not finish, and the post was
@@ -690,6 +736,16 @@ func buildSummaryReport(artifacts []benchmark.QueueArtifact, exclusions []benchm
 			return summaryReport{}, fmt.Errorf("product identity or TLS policy changed within stratum %+v for client %s", stratum, job.Run.Client)
 		}
 		identities[productKey] = identity
+		// Fixture-specific paths/passwords legitimately alter rendered config,
+		// but changing the actual client/helper build between fixtures cannot
+		// form one class-level comparison of those products.
+		aggregateIdentity := identity
+		aggregateIdentity.RenderedConfigSHA256 = ""
+		aggregateProduct := aggregateProductKey{stratum.aggregateKey(job.FixtureClass), job.Run.Client}
+		if previous, ok := aggregateProducts[aggregateProduct]; ok && previous != aggregateIdentity {
+			return summaryReport{}, fmt.Errorf("product build or TLS policy changed across fixtures in aggregate for client %s", job.Run.Client)
+		}
+		aggregateProducts[aggregateProduct] = aggregateIdentity
 		blocks := groups[stratum]
 		if blocks == nil {
 			blocks = make(map[int]*comparisonBlock)
@@ -751,6 +807,7 @@ func buildSummaryReport(artifacts []benchmark.QueueArtifact, exclusions []benchm
 				block.baselineDNF = true
 			} else {
 				block.baseline = &measurement
+				block.baselineUncertainty = float64(job.AdapterResult.TerminalObservationUncertainty)
 				block.baselineCPU = cpuValue
 			}
 		} else {
@@ -761,6 +818,7 @@ func buildSummaryReport(artifacts []benchmark.QueueArtifact, exclusions []benchm
 				block.candidateDNF = true
 			} else {
 				block.candidate = &measurement
+				block.candidateUncertainty = float64(job.AdapterResult.TerminalObservationUncertainty)
 				block.candidateCPU = cpuValue
 			}
 		}
@@ -829,6 +887,11 @@ func buildSummaryReport(artifacts []benchmark.QueueArtifact, exclusions []benchm
 		}
 		completion.PairedBlocks = len(samples)
 		comparison := stratifiedComparison{Stratum: stratum, FixtureClass: class, Encoding: encodings[stratum.FixtureID], Completion: completion}
+		comparison.FixtureName = names[stratum.FixtureID]
+		comparison.DisplayName = comparisonDisplayName(comparison.FixtureName, stratum)
+		comparison.WorkloadSHA256 = workloads[stratum]
+		comparison.InfrastructureSHA256 = infrastructures[stratum]
+		comparison.TimingPrecision = assessTiming(blocks, repetitions, seed, resamples, completion)
 		for _, client := range []benchmark.Client{baseline, candidate} {
 			if identity, ok := identities[summaryProductKey{Stratum: stratum, Client: client}]; ok {
 				comparison.TransportPolicies = append(comparison.TransportPolicies, clientTransportPolicy{Client: client, TLSValidation: identity.TLSValidation, TransportLabel: identity.TransportLabel})
@@ -863,6 +926,10 @@ func buildSummaryReport(artifacts []benchmark.QueueArtifact, exclusions []benchm
 		}
 		comparison.Summary = &summary
 		report.Comparisons = append(report.Comparisons, comparison)
+		if completion.BaselineDidNotFinish > 0 || completion.CandidateDidNotFinish > 0 {
+			account.withheld = append(account.withheld, stratum.FixtureID)
+			continue
+		}
 		account.samples[stratum.FixtureID] = samples
 	}
 	if len(report.Comparisons) == 0 {
@@ -873,6 +940,10 @@ func buildSummaryReport(artifacts []benchmark.QueueArtifact, exclusions []benchm
 		return summaryReport{}, err
 	}
 	report.Aggregates = classAggregates
+	report.Subgroups, err = buildClassAggregates(subgroupAccounts(aggregates, cases), seed, resamples)
+	if err != nil {
+		return summaryReport{}, err
+	}
 	return report, nil
 }
 
@@ -888,7 +959,7 @@ func buildClassAggregates(accounts map[aggregateStratum]*aggregateAccount, seed 
 	result := make([]classAggregate, 0, len(keys))
 	for _, key := range keys {
 		account := accounts[key]
-		aggregate := classAggregate{Stratum: key, FixturesCompared: make([]string, 0, len(account.samples))}
+		aggregate := classAggregate{Weighting: "coverage_balanced_equal_fixture_weight_not_market_representative", Stratum: key, FixturesCompared: make([]string, 0, len(account.samples))}
 		for fixtureID := range account.samples {
 			aggregate.FixturesCompared = append(aggregate.FixturesCompared, fixtureID)
 		}
@@ -953,6 +1024,7 @@ func buildCPUTimeComparison(stratum comparisonStratum, blocks map[int]*compariso
 	sort.Strings(comparison.Caveats)
 
 	var withheld []string
+	var compatible *cpuProvenance
 	scopes := make(map[benchmark.Client]string)
 	for _, client := range []benchmark.Client{baseline, candidate} {
 		accounting := clientCPUAccounting{Client: client}
@@ -970,6 +1042,11 @@ func buildCPUTimeComparison(stratum comparisonStratum, blocks map[int]*compariso
 			sort.Slice(provenances, func(left, right int) bool { return fmt.Sprint(provenances[left]) < fmt.Sprint(provenances[right]) })
 			if len(provenances) > 0 {
 				first := provenances[0]
+				if compatible != nil && *compatible != first {
+					withheld = append(withheld, "resource collection windows or collectors differ")
+				}
+				copy := first
+				compatible = &copy
 				accounting.Scope, accounting.Collector, accounting.CollectorVersion = first.Scope, first.Collector, first.CollectorVersion
 			}
 			// One source per client per stratum, like the product identity:
@@ -1005,19 +1082,15 @@ func buildCPUTimeComparison(stratum comparisonStratum, blocks map[int]*compariso
 		comparison.ComparisonWithheld = strings.Join(withheld, "; ")
 		return comparison, nil
 	}
-	// The counter is secondary evidence with its own accounting, so a lane
-	// that lost it on a few blocks does not lose the comparison: the paired
-	// summary needs two blocks, and falling short of the run's minimum is
-	// stated as a caveat rather than withheld.
-	if len(samples) < 2 {
-		comparison.ComparisonWithheld = fmt.Sprintf("%d paired CPU blocks, need at least 2: %s measured %d and had %d unavailable, %s measured %d and had %d unavailable",
+	// Secondary counters must meet the same predeclared minimum pair count;
+	// missing telemetry is not permission to lower the evidence threshold.
+	if len(samples) < max(2, minimumBlocks) {
+		comparison.ComparisonWithheld = fmt.Sprintf("%d paired CPU blocks, need at least %d: %s measured %d and had %d unavailable, %s measured %d and had %d unavailable",
 			len(samples),
+			max(2, minimumBlocks),
 			baseline, comparison.Accounting[0].MeasuredBlocks, comparison.Accounting[0].UnavailableBlocks,
 			candidate, comparison.Accounting[1].MeasuredBlocks, comparison.Accounting[1].UnavailableBlocks)
 		return comparison, nil
-	}
-	if len(samples) < minimumBlocks {
-		comparison.Caveats = append(comparison.Caveats, fmt.Sprintf("%d paired CPU blocks is below the run's minimum of %d; the interval is indicative, not a gate", len(samples), minimumBlocks))
 	}
 	summary, err := benchmark.SummarizePaired(samples, seed, resamples)
 	if err != nil {

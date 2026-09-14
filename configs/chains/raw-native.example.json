@@ -28,6 +28,7 @@
   "phases": [
     {
       "name": "N0-eqt-local",
+      "display_name": "Native application downloads without added latency",
       "mode": "sequential",
       "plan": "plan-N0-eqt-tls-local.json",
       "fixtures_root": "../fixtures",
@@ -51,6 +52,7 @@
     },
     {
       "name": "N100-eqt-local",
+      "display_name": "Native application downloads over a high-latency link",
       "mode": "sequential",
       "plan": "plan-N100-eqt-tls-local.json",
       "fixtures_root": "../fixtures",
