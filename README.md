@@ -805,10 +805,8 @@ the measured round trip, SABnzbd 5 sends the two requests per connection its
 own new-server default declares, and NZBGet sends one request per connection.
 A server that stays silent therefore benches every client one article per
 round trip and hides exactly the difference a shaped round trip exists to
-show. The Weaver adapters seed the server's pipelining flag from the
-environment (`WEAVER_SERVER_1_PIPELINING=true`, Weaver 0.10.3 or newer),
-because an environment-seeded server is never probed the way a server added
-through Weaver's UI is.
+show. The Weaver adapters never set Weaver's pipelining flag; Weaver finds out
+whether a server pipelines on its own, as it does for any server it is given.
 
 #### Fixed round trip
 

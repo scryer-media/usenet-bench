@@ -424,13 +424,6 @@ func renderWeaver(c Config, _ bool) ProductSpec {
 		"WEAVER_SERVER_1_PASSWORD=" + c.NNTPPassword,
 		"WEAVER_SERVER_1_CONNECTIONS=" + strconv.Itoa(c.Connections),
 		"WEAVER_SERVER_1_ACTIVE=true",
-		// A server added through Weaver's UI is probed for CAPABILITIES and
-		// records whether it advertises PIPELINING; an environment-seeded
-		// server is never probed and would stay sequential on every
-		// connection. The benchmark server advertises PIPELINING (see the
-		// server topology), so the flag is seeded the way the probe would
-		// have set it. Weaver 0.10.3 or newer; older images reject the field.
-		"WEAVER_SERVER_1_PIPELINING=true",
 		// Weaver's first-run access policy hands an anonymous browser session
 		// only to peers on its trusted-network list; without one, an install
 		// with no login serves a setup notice and refuses every GraphQL call.
