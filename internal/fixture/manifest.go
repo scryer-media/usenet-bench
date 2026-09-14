@@ -8,8 +8,9 @@ import (
 
 // GeneratedManifestSchemaVersion is the schema every newly generated fixture
 // manifest is written at. Older manifests stay readable; the loader fills in
-// the fields their schema predates.
-const GeneratedManifestSchemaVersion = 8
+// the fields their schema predates. Schema 9 adds withheld-article faults,
+// which a seeder that predates them would post in full, so it refuses them.
+const GeneratedManifestSchemaVersion = 9
 
 // FileDigest describes a fixture input, archive volume, or repair artifact.
 // Paths are always relative to the fixture directory.
@@ -169,12 +170,45 @@ type PAR3Details struct {
 	BlockSize int64    `json:"block_size,omitempty"`
 	Embedded  bool     `json:"embedded,omitempty"`
 	Arguments []string `json:"arguments"`
+	// Cohorts is the number of interleaved FFT cohorts the creation asked
+	// for; zero leaves the choice to the reference.
+	Cohorts int `json:"cohorts,omitempty"`
+	// PAR2AtLimit is set for the lane past PAR2's block limit.
+	PAR2AtLimit *PAR2LimitComparison `json:"par2_at_limit,omitempty"`
 }
 
+// PAR2LimitComparison is what the same withheld articles would cost a PAR2
+// set over the same post. PAR2 can repair only when it holds at least as many
+// recovery blocks as there are damaged source blocks, so the comparison is
+// exact without writing the set.
+type PAR2LimitComparison struct {
+	// BlockSize is PAR2's smallest legal block size for the post: the
+	// smallest multiple of four that keeps it within PAR2BlockLimit blocks.
+	BlockSize    int64 `json:"block_size"`
+	SourceBlocks int64 `json:"source_blocks"`
+	// DamagedBlocks counts the distinct PAR2 blocks the withheld articles
+	// touch; one article usually straddles two.
+	DamagedBlocks int64 `json:"damaged_blocks"`
+	// RecoveryBlocks is what the same redundancy percentage buys PAR2.
+	RecoveryBlocks int64 `json:"recovery_blocks"`
+	// RequiredRedundancyPercent is the least whole percentage that repairs.
+	RequiredRedundancyPercent int `json:"required_redundancy_percent"`
+	// PAR3LostBlocks is the PAR3 lane's loss for the same articles: one
+	// block per article.
+	PAR3LostBlocks   int64 `json:"par3_lost_blocks"`
+	PAR3SourceBlocks int64 `json:"par3_source_blocks"`
+}
+
+// WithheldArticleFault is the CorruptionDetail kind of one article the server
+// refuses.
+const WithheldArticleFault = "withheld-article"
+
 // CorruptionDetail records a deterministic mutation or intentional omission.
-// Offset and Length are populated for byte-flip faults only. Kind is one of
-// byte-flip, missing-volume (absent from the NZB entirely) or withheld-volume
-// (listed in the NZB, never posted).
+// Offset and Length are populated for byte-flip and withheld-article faults.
+// Kind is one of byte-flip, missing-volume (absent from the NZB entirely),
+// withheld-volume (listed in the NZB, never posted) or withheld-article (one
+// article of a posted file whose NZB segment names an identifier that was
+// never posted; Offset and Length are the raw bytes that article carries).
 type CorruptionDetail struct {
 	Kind   string `json:"kind"`
 	Path   string `json:"path"`

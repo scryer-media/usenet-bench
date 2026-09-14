@@ -403,12 +403,51 @@ const (
 	// container itself ("PAR inside ZIP"), so the post carries no parity file
 	// at all, and damages the member data in several places.
 	PAR3InsideLightProfile RepairProfile = "par3-inside-light"
+
+	// The scattered profiles are the regime PAR3's FFT code was designed for:
+	// many small blocks and many of them missing. Every block is exactly one
+	// article, and the fault is individual articles refused by the server,
+	// spread evenly over the whole post, which is how a large real post
+	// degrades. PAR2 and PAR3 lanes of the same severity withhold the very
+	// same articles with the same redundancy, so the pair differs only in the
+	// parity format. PAR2 is at its best geometry here, one block per article
+	// and well under its 32768-block limit; its repair work still grows with
+	// present blocks times missing blocks, while the FFT code's grows with
+	// the block count alone.
+	PAR2ScatteredLightProfile    RepairProfile = "par2-scattered-light"
+	PAR2ScatteredHeavyProfile    RepairProfile = "par2-scattered-heavy"
+	PAR3FFTScatteredLightProfile RepairProfile = "par3-fft-scattered-light"
+	PAR3FFTScatteredHeavyProfile RepairProfile = "par3-fft-scattered-heavy"
+
+	// PAR3FFTPastPAR2CapProfile is the lane PAR2 cannot serve at all. The
+	// post has more articles than PAR2's 32768-block limit, so any PAR2 set
+	// over it needs blocks longer than one article and every withheld article
+	// damages about two PAR2 blocks; at the heavy severity's 10% redundancy no
+	// PAR2 set of that size can repair the damage, while PAR3 keeps one block
+	// per article and repairs it with room to spare. The generator proves
+	// both halves: the reference PAR3 repair, and the exact count of PAR2
+	// blocks the same articles would damage at PAR2's smallest legal block
+	// size, refusing the fixture unless that count exceeds PAR2's recovery.
+	// The FFT set is also split into two interleaved cohorts, which the
+	// reference does unprompted only above 65536 blocks.
+	PAR3FFTPastPAR2CapProfile RepairProfile = "par3-fft-past-par2-cap"
 )
+
+// PAR2BlockLimit is the most source blocks one PAR2 recovery set can hold.
+const PAR2BlockLimit = 32768
+
+// ScatteredArticleBytes is the raw article size the scattered profiles are
+// built for, the 750k article stratum. Their repair blocks are cut to exactly
+// this size so one missing article is one missing block; a seed at any other
+// article size would misplace every withheld article and is refused.
+const ScatteredArticleBytes = 768000
 
 func (p RepairProfile) Valid() bool {
 	switch p {
 	case CleanRepairProfile, PAR2LightRepairProfile, PAR2HeavyRepairProfile, PAR2HeavyWithheldProfile, RARRecoveryVolumeLightProfile, RARRecoveryVolumeHeavyProfile,
-		PAR3LightRepairProfile, PAR3HeavyWithheldProfile, PAR3FFTHeavyWithheldProfile, PAR3InsideLightProfile:
+		PAR3LightRepairProfile, PAR3HeavyWithheldProfile, PAR3FFTHeavyWithheldProfile, PAR3InsideLightProfile,
+		PAR2ScatteredLightProfile, PAR2ScatteredHeavyProfile, PAR3FFTScatteredLightProfile, PAR3FFTScatteredHeavyProfile,
+		PAR3FFTPastPAR2CapProfile:
 		return true
 	default:
 		return false
@@ -419,11 +458,40 @@ func (p RepairProfile) Valid() bool {
 // separate files or embedded in the container.
 func (p RepairProfile) UsesPAR3() bool {
 	switch p {
-	case PAR3LightRepairProfile, PAR3HeavyWithheldProfile, PAR3FFTHeavyWithheldProfile, PAR3InsideLightProfile:
+	case PAR3LightRepairProfile, PAR3HeavyWithheldProfile, PAR3FFTHeavyWithheldProfile, PAR3InsideLightProfile,
+		PAR3FFTScatteredLightProfile, PAR3FFTScatteredHeavyProfile, PAR3FFTPastPAR2CapProfile:
 		return true
 	default:
 		return false
 	}
+}
+
+// WithholdsArticles reports whether the profile's fault is individual
+// articles refused by the server rather than whole files or flipped bytes.
+func (p RepairProfile) WithholdsArticles() bool {
+	_, _, ok := p.ScatteredDamage()
+	return ok
+}
+
+// ScatteredDamage is the severity of a scattered profile: how many articles
+// in every thousand are withheld, and the redundancy written to repair them.
+// Light and heavy are shared by the PAR2 and PAR3 lanes, so both formats see
+// the same fault with the same recovery budget.
+func (p RepairProfile) ScatteredDamage() (withheldPerMille, redundancyPercent int, ok bool) {
+	switch p {
+	case PAR2ScatteredLightProfile, PAR3FFTScatteredLightProfile:
+		return 10, 5, true
+	case PAR2ScatteredHeavyProfile, PAR3FFTScatteredHeavyProfile, PAR3FFTPastPAR2CapProfile:
+		return 70, 10, true
+	default:
+		return 0, 0, false
+	}
+}
+
+// ExceedsPAR2BlockLimit reports whether the profile's post must be too large
+// for a PAR2 set with one block per article.
+func (p RepairProfile) ExceedsPAR2BlockLimit() bool {
+	return p == PAR3FFTPastPAR2CapProfile
 }
 
 // EmbedsPAR3 reports whether the PAR3 packets live inside the container.
@@ -434,7 +502,7 @@ func (p RepairProfile) EmbedsPAR3() bool {
 // UsesPAR2 reports whether the profile posts PAR2 recovery material.
 func (p RepairProfile) UsesPAR2() bool {
 	switch p {
-	case PAR2LightRepairProfile, PAR2HeavyRepairProfile, PAR2HeavyWithheldProfile:
+	case PAR2LightRepairProfile, PAR2HeavyRepairProfile, PAR2HeavyWithheldProfile, PAR2ScatteredLightProfile, PAR2ScatteredHeavyProfile:
 		return true
 	default:
 		return false
@@ -763,6 +831,11 @@ func (s FixtureSet) validate() error {
 		if err := s.validatePAR3Profile(profile); err != nil {
 			return err
 		}
+		// Articles are withheld by rewriting the NZB the yEnc poster emits;
+		// the uuencode seeder has no such step and would post them all.
+		if profile.WithholdsArticles() && s.Encoding != "" && s.Encoding != YEncEncoding {
+			return fmt.Errorf("fixture set %q cannot use repair_profile %q with encoding %q: withheld articles are a yEnc posting feature", s.ID, profile, s.Encoding)
+		}
 	}
 	if s.PayloadLayout == "" {
 		s.PayloadLayout = UniformPayloadLayout
@@ -860,6 +933,21 @@ func (s FixtureSet) validatePAR3Profile(profile RepairProfile) error {
 				return fmt.Errorf("fixture set %q cannot use repair_profile %q with encryption %q", s.ID, profile, encryption)
 			}
 		}
+		return nil
+	}
+	if profile.ExceedsPAR2BlockLimit() {
+		// Container overhead only adds bytes, so a payload past the limit is
+		// a post past it. A reduced-size local run scales the payload down and
+		// the generator refuses the fixture then; the matrix must still
+		// declare a size that means something.
+		size, err := ByteSize(s.BytesPerFile)
+		if err != nil || int64(s.FileCount)*size <= PAR2BlockLimit*ScatteredArticleBytes {
+			return fmt.Errorf("fixture set %q cannot use repair_profile %q: its payload must exceed %d articles of %d bytes", s.ID, profile, PAR2BlockLimit, ScatteredArticleBytes)
+		}
+	}
+	if profile.WithholdsArticles() {
+		// Scattered damage lands anywhere in the post, so it needs neither a
+		// split container nor spare files.
 		return nil
 	}
 	if s.ArchiveFormat == Media {

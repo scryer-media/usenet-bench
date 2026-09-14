@@ -112,7 +112,7 @@ func TestPAR3ProfilesRefuseShapesTheyCannotFault(t *testing.T) {
 
 // The PAR3 lanes are release-over-release timings, so their identity must not
 // drift: a renamed or dropped lane silently breaks the comparison.
-func TestCheckedInMatrixCarriesTheFivePAR3BreadthLanes(t *testing.T) {
+func TestCheckedInMatrixCarriesThePAR3BreadthLanes(t *testing.T) {
 	matrix, err := LoadMatrix("../../fixtures/matrix.json")
 	if err != nil {
 		t.Fatal(err)
@@ -135,6 +135,9 @@ func TestCheckedInMatrixCarriesTheFivePAR3BreadthLanes(t *testing.T) {
 		"repair-rar5-7-store-par3-headers-par3-heavy-withheld-store-nonsolid-headers-incompressible": PAR3HeavyWithheldProfile,
 		"repair-media-par3-fft-par3-fft-heavy-withheld-store-nonsolid-none-incompressible":           PAR3FFTHeavyWithheldProfile,
 		"repair-zip-store-par3-inside-par3-inside-light-store-nonsolid-none-incompressible":          PAR3InsideLightProfile,
+		"repair-rar5-7-store-scatter-par3-fft-scattered-light-store-nonsolid-none-incompressible":    PAR3FFTScatteredLightProfile,
+		"repair-rar5-7-store-scatter-par3-fft-scattered-heavy-store-nonsolid-none-incompressible":    PAR3FFTScatteredHeavyProfile,
+		"repair-rar5-7-store-pastcap-par3-fft-past-par2-cap-store-nonsolid-none-incompressible":      PAR3FFTPastPAR2CapProfile,
 	}
 	found := 0
 	for _, c := range cases {
@@ -162,4 +165,95 @@ func TestScatteredOrderInterleavesPAR3Material(t *testing.T) {
 	if !isRepairMaterial("archive/fixture.vol0+1.par3") || !isRepairMaterial("archive/FIXTURE.PAR3") {
 		t.Fatal("PAR3 files are not treated as repair material")
 	}
+}
+
+func TestScatteredLanesPairEveryPAR3LaneWithItsPAR2Twin(t *testing.T) {
+	matrix, err := LoadMatrix("../../fixtures/matrix.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases, err := matrix.Expand()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bySet := map[string]map[RepairProfile]ArchiveCase{}
+	for _, c := range cases {
+		if !c.RepairProfile.WithholdsArticles() || c.RepairProfile.ExceedsPAR2BlockLimit() {
+			continue
+		}
+		if bySet[c.SetID] == nil {
+			bySet[c.SetID] = map[RepairProfile]ArchiveCase{}
+		}
+		bySet[c.SetID][c.RepairProfile] = c
+	}
+	lanes := bySet["repair-rar5-7-store-scatter"]
+	if len(bySet) != 1 || len(lanes) != 4 {
+		t.Fatalf("scattered lanes = %v", bySet)
+	}
+	for _, pair := range [][2]RepairProfile{
+		{PAR2ScatteredLightProfile, PAR3FFTScatteredLightProfile},
+		{PAR2ScatteredHeavyProfile, PAR3FFTScatteredHeavyProfile},
+	} {
+		par2, par3 := lanes[pair[0]], lanes[pair[1]]
+		if !par2.RepairProfile.UsesPAR2() || par2.RepairProfile.UsesPAR3() || !par3.RepairProfile.UsesPAR3() || par3.RepairProfile.UsesPAR2() {
+			t.Fatalf("%s/%s do not split by parity format", pair[0], pair[1])
+		}
+		if par2.BytesPerFile != par3.BytesPerFile || par2.VolumeSize != par3.VolumeSize || par2.ArchiveFormat != par3.ArchiveFormat {
+			t.Fatalf("%s and %s are not over the same archive", par2.ID, par3.ID)
+		}
+	}
+	// PAR2 must stay at its best geometry, one block per article, which
+	// its 32768-block limit allows only below about 25 GiB.
+	size, err := ByteSize(lanes[PAR2ScatteredHeavyProfile].BytesPerFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blocks := size / ScatteredArticleBytes; blocks >= 32768*9/10 {
+		t.Fatalf("the scattered set needs %d article-sized PAR2 blocks, too close to PAR2's limit", blocks)
+	}
+}
+
+func TestScatteredProfilesRefuseUUEncodedPosts(t *testing.T) {
+	matrix, err := LoadMatrix("../../fixtures/matrix.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, set := range matrix.Sets {
+		if set.ID != "repair-rar5-7-store-scatter" {
+			continue
+		}
+		if err := set.validate(); err != nil {
+			t.Fatalf("the checked-in scattered set is invalid: %v", err)
+		}
+		set.Encoding = UUEncodeEncoding
+		if err := set.validate(); err == nil {
+			t.Fatal("a uuencoded post accepted withheld articles")
+		}
+		return
+	}
+	t.Fatal("the scattered set is missing from the matrix")
+}
+
+func TestPastPAR2CapLaneMustDeclareAPostPAR2CannotHold(t *testing.T) {
+	matrix, err := LoadMatrix("../../fixtures/matrix.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, set := range matrix.Sets {
+		if set.ID != "repair-rar5-7-store-pastcap" {
+			continue
+		}
+		if err := set.validate(); err != nil {
+			t.Fatalf("the checked-in past-cap set is invalid: %v", err)
+		}
+		if len(set.RepairProfiles) != 1 || !set.RepairProfiles[0].ExceedsPAR2BlockLimit() || !set.RepairProfiles[0].UsesPAR3() || set.RepairProfiles[0].UsesPAR2() {
+			t.Fatalf("past-cap set profiles = %v", set.RepairProfiles)
+		}
+		set.BytesPerFile = "8g"
+		if err := set.validate(); err == nil {
+			t.Fatal("an 8 GiB post was accepted as past PAR2's block limit")
+		}
+		return
+	}
+	t.Fatal("the past-cap set is missing from the matrix")
 }

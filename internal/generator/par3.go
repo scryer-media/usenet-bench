@@ -73,6 +73,12 @@ type par3Recipe struct {
 	redundancy int
 	withheld   int
 	flips      int
+	// articlesPerMille is set for the scattered profiles, whose blocks are
+	// one article each and whose fault is withheld articles.
+	articlesPerMille int
+	// cohorts, when above one, asks the reference for that many interleaved
+	// FFT cohorts.
+	cohorts int
 }
 
 func par3Parameters(profile fixture.RepairProfile) (par3Recipe, error) {
@@ -87,6 +93,12 @@ func par3Parameters(profile fixture.RepairProfile) (par3Recipe, error) {
 		// insert chooses its own block size and code, so only the redundancy
 		// is the harness's choice.
 		return par3Recipe{code: "reference-default", redundancy: 10, flips: par3InsideFaults}, nil
+	case fixture.PAR3FFTScatteredLightProfile, fixture.PAR3FFTScatteredHeavyProfile:
+		perMille, redundancy, _ := profile.ScatteredDamage()
+		return par3Recipe{code: "fft", codeArg: "-e8", redundancy: redundancy, articlesPerMille: perMille}, nil
+	case fixture.PAR3FFTPastPAR2CapProfile:
+		perMille, redundancy, _ := profile.ScatteredDamage()
+		return par3Recipe{code: "fft", codeArg: "-e8", redundancy: redundancy, articlesPerMille: perMille, cohorts: 2}, nil
 	default:
 		return par3Recipe{}, fmt.Errorf("repair profile %q is not a PAR3 profile", profile)
 	}
@@ -113,7 +125,7 @@ func applyPAR3Profile(ctx context.Context, in repairInputs) (*fixture.PAR3Detail
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		if err := verifyPAR3Repair(ctx, in, nil); err != nil {
+		if err := verifyPAR3Repair(ctx, in, nil, nil); err != nil {
 			return nil, nil, nil, err
 		}
 		return details, faults, nil, nil
@@ -128,14 +140,46 @@ func applyPAR3Profile(ctx context.Context, in repairInputs) (*fixture.PAR3Detail
 		names = append(names, name)
 	}
 	details.BlockSize = par3BlockSize
-	details.Arguments = append([]string{
+	if recipe.articlesPerMille > 0 {
+		details.BlockSize = fixture.ScatteredArticleBytes
+	}
+	details.Arguments = []string{
 		"create", "-q", recipe.codeArg,
 		fmt.Sprintf("-r%d", recipe.redundancy),
-		fmt.Sprintf("-s%d", par3BlockSize),
-		par3IndexName,
-	}, names...)
+		fmt.Sprintf("-s%d", details.BlockSize),
+	}
+	if recipe.cohorts > 1 {
+		// The reference counts the blocks interleaved between cohorts, so
+		// N cohorts is -i(N-1).
+		details.Cohorts = recipe.cohorts
+		details.Arguments = append(details.Arguments, fmt.Sprintf("-i%d", recipe.cohorts-1))
+	}
+	details.Arguments = append(append(details.Arguments, par3IndexName), names...)
+	if profile.ExceedsPAR2BlockLimit() {
+		// Prove PAR2 cannot serve this post before spending the creation and
+		// repair time on it.
+		faults, err := scatteredArticles(in.SourceArchives, in.Case.SetID, recipe.articlesPerMille)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		comparison, err := par2LimitComparison(in.SourceArchives, faults, recipe.redundancy)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("repair profile %q: %w", profile, err)
+		}
+		details.PAR2AtLimit = &comparison
+	}
 	if err := runPAR3(ctx, in.Config.DockerBinary, *in.PAR3Toolchain, in.CaseDir, details.Arguments...); err != nil {
 		return nil, nil, nil, fmt.Errorf("create PAR3 recovery material: %w", err)
+	}
+	if recipe.articlesPerMille > 0 {
+		faults, err := scatteredArticles(in.SourceArchives, in.Case.SetID, recipe.articlesPerMille)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if err := verifyPAR3Repair(ctx, in, nil, faults); err != nil {
+			return nil, nil, nil, err
+		}
+		return details, faults, nil, nil
 	}
 
 	// The faulted files are chosen the same way the PAR2 lanes choose theirs:
@@ -162,7 +206,7 @@ func applyPAR3Profile(ctx context.Context, in repairInputs) (*fixture.PAR3Detail
 		}
 		faults = append(faults, fault)
 	}
-	if err := verifyPAR3Repair(ctx, in, withheld); err != nil {
+	if err := verifyPAR3Repair(ctx, in, withheld, nil); err != nil {
 		return nil, nil, nil, err
 	}
 	return details, faults, withheld, nil
@@ -210,12 +254,15 @@ func embedPAR3(ctx context.Context, in repairInputs, recipe par3Recipe, details 
 	return faults, nil
 }
 
-func verifyPAR3Repair(ctx context.Context, in repairInputs, withheld []fixture.FileDigest) error {
+func verifyPAR3Repair(ctx context.Context, in repairInputs, withheld []fixture.FileDigest, articles []fixture.CorruptionDetail) error {
 	verifyDir, err := copyArchiveForRepairVerification(in.CaseDir, withheld)
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(verifyDir)
+	if err := blankWithheldArticles(verifyDir, articles); err != nil {
+		return err
+	}
 	if in.Case.RepairProfile.EmbedsPAR3() {
 		name, err := archiveRelativeName(in.FirstVolume)
 		if err != nil {

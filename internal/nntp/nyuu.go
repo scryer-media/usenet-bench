@@ -59,6 +59,9 @@ type SeedResult struct {
 	// WithheldFiles are listed in the NZB but were never posted, so every
 	// article a client requests for them is refused.
 	WithheldFiles []string `json:",omitempty"`
+	// WithheldArticles counts the single articles of posted files whose NZB
+	// segments name identifiers that were never posted.
+	WithheldArticles int `json:",omitempty"`
 }
 
 func BuildNyuuImage(ctx context.Context, config NyuuImageConfig) error {
@@ -168,10 +171,14 @@ func SeedWithNyuu(ctx context.Context, config NyuuSeedConfig) (SeedResult, error
 	if err := assertNZBFileOrder(document, plan.Posted); err != nil {
 		return SeedResult{}, fmt.Errorf("Nyuu NZB %s: %w", nzbPath, err)
 	}
-	if len(plan.Withheld) > 0 {
-		if document, err = spliceWithheldFiles(document, plan, config.RunID, manifest.Case.ID, config.SegmentBytes); err != nil {
-			return SeedResult{}, fmt.Errorf("describe withheld volumes for %q: %w", manifest.Case.ID, err)
-		}
+	if document, err = spliceWithheldFiles(document, plan, config.RunID, manifest.Case.ID, config.SegmentBytes); err != nil {
+		return SeedResult{}, fmt.Errorf("describe withheld volumes for %q: %w", manifest.Case.ID, err)
+	}
+	document, withheldArticles, err := withholdArticles(document, plan, manifest.Repair.Corruptions, config.RunID, manifest.Case.ID, config.SegmentBytes)
+	if err != nil {
+		return SeedResult{}, fmt.Errorf("withhold articles for %q: %w", manifest.Case.ID, err)
+	}
+	if len(plan.Withheld) > 0 || withheldArticles > 0 {
 		rewritten, err := MarshalNZB(document.Files)
 		if err != nil {
 			return SeedResult{}, fmt.Errorf("rewrite NZB %s: %w", nzbPath, err)
@@ -194,14 +201,15 @@ func SeedWithNyuu(ctx context.Context, config NyuuSeedConfig) (SeedResult, error
 		return SeedResult{}, fmt.Errorf("Nyuu NZB contains no article segments")
 	}
 	return SeedResult{
-		FixtureID:     manifest.Case.ID,
-		NZBPath:       nzbPath,
-		Files:         len(document.Files),
-		Articles:      articles,
-		NZBOrder:      manifest.Case.NZBOrder,
-		NZBOrderSeed:  manifest.NZBOrderSeed,
-		NZBFileOrder:  plan.Order,
-		WithheldFiles: sortedPaths(manifest.WithheldFiles),
+		FixtureID:        manifest.Case.ID,
+		NZBPath:          nzbPath,
+		Files:            len(document.Files),
+		Articles:         articles,
+		NZBOrder:         manifest.Case.NZBOrder,
+		NZBOrderSeed:     manifest.NZBOrderSeed,
+		NZBFileOrder:     plan.Order,
+		WithheldFiles:    sortedPaths(manifest.WithheldFiles),
+		WithheldArticles: withheldArticles,
 	}, nil
 }
 

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "Declared coverage corpus for isolated client comparison. Each fixture carries the class its matrix set declares (headline: stored RAR of already-compressed media across the writer eras, clear and encrypted, plus PAR2 repair over the stored form from the 4.20, 5.00 and 7.23 writers; breadth: everything else, including the tar, xz, zip, zip64, 7z-codec, RAR-compression, SFV and uuencoded lanes, and five PAR3 repair lanes: Cauchy light and withheld-volume repair over stored RAR5, the withheld-volume repair over encrypted headers, FFT repair of a compound fault over bare media files, and PAR3 embedded in a zip). Fixture counts are coverage choices, not a model of Usenet posting frequency.",
+  "description": "Declared coverage corpus for isolated client comparison. Each fixture carries the class its matrix set declares (headline: stored RAR of already-compressed media across the writer eras, clear and encrypted, plus PAR2 repair over the stored form from the 4.20, 5.00 and 7.23 writers; breadth: everything else, including the tar, xz, zip, zip64, 7z-codec, RAR-compression, SFV and uuencoded lanes, and five PAR3 repair lanes: Cauchy light and withheld-volume repair over stored RAR5, the withheld-volume repair over encrypted headers, FFT repair of a compound fault over bare media files, and PAR3 embedded in a zip, plus four scattered-article lanes over an 8 GiB stored RAR5 set: PAR2 and PAR3 FFT repair of the same withheld articles at 1% and 7%, and one 26 GiB PAR3 FFT lane past PAR2's block limit, where the same 7% loss needs more PAR2 recovery than the same redundancy provides). Fixture counts are coverage choices, not a model of Usenet posting frequency.",
   "fixture_ids": [
     "rar4-393-store-store-nonsolid-none-incompressible",
     "rar4-393-store-store-nonsolid-headers-incompressible",
@@ -77,6 +77,11 @@
     "repair-rar5-7-store-par3-headers-par3-heavy-withheld-store-nonsolid-headers-incompressible",
     "repair-media-par3-fft-par3-fft-heavy-withheld-store-nonsolid-none-incompressible",
     "repair-zip-store-par3-inside-par3-inside-light-store-nonsolid-none-incompressible",
+    "repair-rar5-7-store-scatter-par2-scattered-light-store-nonsolid-none-incompressible",
+    "repair-rar5-7-store-scatter-par3-fft-scattered-light-store-nonsolid-none-incompressible",
+    "repair-rar5-7-store-scatter-par2-scattered-heavy-store-nonsolid-none-incompressible",
+    "repair-rar5-7-store-scatter-par3-fft-scattered-heavy-store-nonsolid-none-incompressible",
+    "repair-rar5-7-store-pastcap-par3-fft-past-par2-cap-store-nonsolid-none-incompressible",
     "direct-mkv"
   ]
 }

@@ -111,6 +111,64 @@ func withheldMessageID(runID, fixtureID string, fileIndex, part int) string {
 	return fmt.Sprintf("bench-%s-%s-withheld%03d-%05d@nntp-bench", safeID(runID), safeID(fixtureID), fileIndex, part)
 }
 
+// withheldArticleMessageID names one refused article of a posted file. Its
+// "missing" segment keeps it apart from both posted identifiers and the
+// articles of a withheld volume.
+func withheldArticleMessageID(runID, fixtureID string, fileIndex, part int) string {
+	return fmt.Sprintf("bench-%s-%s-missing%03d-%05d@nntp-bench", safeID(runID), safeID(fixtureID), fileIndex, part)
+}
+
+// withholdArticles points the NZB segment of every withheld article at an
+// identifier that was never posted. The article itself stays on the server
+// under its real identifier, where nothing names it, so a client that follows
+// the NZB is refused exactly that article and receives every other one. The
+// faults record raw byte ranges, which only map onto articles at the article
+// size they were chosen for, so any other segment size is refused.
+func withholdArticles(document NZBDocument, plan postingPlan, faults []fixture.CorruptionDetail, runID, fixtureID string, segmentBytes int) (NZBDocument, int, error) {
+	positions := make(map[string]int, len(plan.Order))
+	for index, entry := range plan.Order {
+		positions[entry] = index
+	}
+	withheld := 0
+	for _, fault := range faults {
+		if fault.Kind != fixture.WithheldArticleFault {
+			continue
+		}
+		if segmentBytes != fixture.ScatteredArticleBytes {
+			return NZBDocument{}, 0, fmt.Errorf("withheld articles were chosen for %d-byte articles, but this seed posts %d-byte articles", fixture.ScatteredArticleBytes, segmentBytes)
+		}
+		if len(document.Files) != len(plan.Order) {
+			return NZBDocument{}, 0, fmt.Errorf("NZB lists %d files, expected %d", len(document.Files), len(plan.Order))
+		}
+		index, listed := positions[fault.Path]
+		if !listed || plan.Withheld[fault.Path].Path != "" {
+			return NZBDocument{}, 0, fmt.Errorf("withheld article names %s, which is not a posted file", fault.Path)
+		}
+		if fault.Offset < 0 || fault.Offset%int64(segmentBytes) != 0 {
+			return NZBDocument{}, 0, fmt.Errorf("withheld article at %d in %s does not start on an article boundary", fault.Offset, fault.Path)
+		}
+		part := int(fault.Offset/int64(segmentBytes)) + 1
+		segments := document.Files[index].Segments
+		found := false
+		for segment := range segments {
+			if segments[segment].Number != part {
+				continue
+			}
+			if strings.Contains(segments[segment].MessageID, "-missing") {
+				return NZBDocument{}, 0, fmt.Errorf("article %d of %s is withheld twice", part, fault.Path)
+			}
+			segments[segment].MessageID = withheldArticleMessageID(runID, fixtureID, index+1, part)
+			found = true
+			break
+		}
+		if !found {
+			return NZBDocument{}, 0, fmt.Errorf("NZB has no article %d for %s", part, fault.Path)
+		}
+		withheld++
+	}
+	return document, withheld, nil
+}
+
 // modalFullSegmentBytes reports the encoded article size the poster used for a
 // full segment, measured from the articles it just wrote rather than assumed
 // from a yEnc expansion constant. Each file's final segment is excluded
