@@ -418,14 +418,18 @@ func (s *nntpSession) authenticate(username, password string) error {
 // post writes one article. Every body line is dot-stuffed: a uuencode line
 // carrying exactly 14 bytes begins with '.', and an unstuffed one would
 // silently terminate the article mid-file.
+//
+// The 340 and the 240 both answer the one POST command, so the response slot
+// stays held across the whole exchange: ending it after the 340 advances the
+// pipeline past this id, and starting it again for the 240 waits forever.
 func (s *nntpSession) post(headers, body []string) error {
 	id, err := s.text.Cmd("POST")
 	if err != nil {
 		return err
 	}
 	s.text.StartResponse(id)
+	defer s.text.EndResponse(id)
 	code, message, err := s.text.ReadCodeLine(-1)
-	s.text.EndResponse(id)
 	if err != nil {
 		return err
 	}
@@ -460,9 +464,7 @@ func (s *nntpSession) post(headers, body []string) error {
 	if err := writer.Flush(); err != nil {
 		return err
 	}
-	s.text.StartResponse(id)
 	code, message, err = s.text.ReadCodeLine(-1)
-	s.text.EndResponse(id)
 	if err != nil {
 		return err
 	}

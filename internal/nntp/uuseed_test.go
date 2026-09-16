@@ -2,8 +2,11 @@ package nntp
 
 import (
 	"math/rand"
+	"net"
+	"net/textproto"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/scryer-media/usenet-bench/internal/uucodec"
 )
@@ -89,5 +92,49 @@ func TestUUMessageIDsMatchTheirTemplate(t *testing.T) {
 	expected := strings.NewReplacer("{0filenum}", "001", "{0part}", "00042").Replace(template)
 	if id != expected {
 		t.Fatalf("message id %q does not match its template expansion %q", id, expected)
+	}
+}
+
+// Posting two articles on one session must not hang: the 340 and the 240 both
+// answer one POST, and a session that gives up its response slot between them
+// never reads the 240.
+func TestPostReadsBothRepliesOfEveryArticle(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	received := make(chan []string, 2)
+	go func() {
+		defer server.Close()
+		text := textproto.NewConn(server)
+		for range 2 {
+			if line, err := text.ReadLine(); err != nil || line != "POST" {
+				t.Errorf("server read %q, %v; want POST", line, err)
+				return
+			}
+			if err := text.PrintfLine("340 send article"); err != nil {
+				return
+			}
+			lines, err := text.ReadDotLines()
+			if err != nil {
+				t.Errorf("server read article: %v", err)
+				return
+			}
+			received <- lines
+			if err := text.PrintfLine("240 article received"); err != nil {
+				return
+			}
+		}
+	}()
+	if err := client.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	session := &nntpSession{conn: client, text: textproto.NewConn(client)}
+	for part := 1; part <= 2; part++ {
+		if err := session.post([]string{"Subject: part"}, []string{".begins with a dot", "plain"}); err != nil {
+			t.Fatalf("post part %d: %v", part, err)
+		}
+		lines := <-received
+		if want := []string{"Subject: part", "", ".begins with a dot", "plain"}; strings.Join(lines, "\n") != strings.Join(want, "\n") {
+			t.Fatalf("part %d arrived as %q, want %q", part, lines, want)
+		}
 	}
 }
