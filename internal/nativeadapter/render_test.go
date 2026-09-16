@@ -333,3 +333,22 @@ func TestNativePublicRootsTLSValidatesAgainstEachClientsOwnStore(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderWeaverForwardsTheMasterKeyWithoutWritingIt(t *testing.T) {
+	t.Setenv("WEAVER_ENCRYPTION_KEY", "aGVsbG8td2VhdmVyLW1hc3Rlci1rZXktZm9yLXRlc3Rz")
+	spec := renderWeaver(testConfig(benchmark.Weaver))
+	// The launched client needs the key: a bench host may have no signed-in
+	// user, and then weaver's credential-store fallback has nothing to read.
+	found := false
+	for _, entry := range spec.Environment {
+		if entry == "WEAVER_ENCRYPTION_KEY=aGVsbG8td2VhdmVyLW1hc3Rlci1rZXktZm9yLXRlc3Rz" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("weaver would fall back to the host credential store:\n%q", spec.Environment)
+	}
+	if strings.Contains(string(spec.Content), "WEAVER_ENCRYPTION_KEY") {
+		t.Fatalf("the rendered config wrote the master key to disk:\n%s", spec.Content)
+	}
+}

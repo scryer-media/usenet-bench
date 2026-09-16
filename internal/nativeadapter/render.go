@@ -173,10 +173,20 @@ func renderWeaver(cfg Config) productSpec {
 		startupIops = "50000"
 	}
 	env = append(env, "WEAVER_STARTUP_IOPS="+startupIops)
+	// Weaver takes its master key from the environment, and failing that from
+	// the host's credential store. A native client is launched with a filtered
+	// environment, and on a host where no one is signed in there is no
+	// credential store to fall back to, so the key the catalog supplies is
+	// forwarded explicitly. It stays out of the rendered file: the audit
+	// record names settings, not secrets.
+	environment := env
+	if key, ok := os.LookupEnv("WEAVER_ENCRYPTION_KEY"); ok {
+		environment = append(append([]string(nil), env...), "WEAVER_ENCRYPTION_KEY="+key)
+	}
 	return productSpec{
 		ConfigName:  "weaver.env",
 		Content:     []byte(strings.Join(env, "\n") + "\n"),
-		Environment: env,
+		Environment: environment,
 		Command:     expandCommand(cfg.LaunchCommand, cfg),
 	}
 }
