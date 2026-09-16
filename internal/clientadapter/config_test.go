@@ -120,8 +120,8 @@ func TestWeaverQueueUsesServiceAndPreservesControllerOwnership(t *testing.T) {
 	if !strings.Contains(environment, "WEAVER_PROPAGATION_DELAY_SECS=0") {
 		t.Fatalf("queue Weaver environment must disable the propagation hold; the other clients run with it at zero and every benchmark NZB is freshly posted: %s", environment)
 	}
-	if !strings.Contains(environment, "WEAVER_SERVER_1_PIPELINING=true") {
-		t.Fatalf("queue Weaver environment must record the server's PIPELINING support, or every connection fetches one article per round trip: %s", environment)
+	if strings.Contains(environment, "PIPELINING") {
+		t.Fatalf("queue Weaver environment must leave pipelining unstated so weaver asks the server, as a fresh install does; a stated value pins it and skips the probe: %s", environment)
 	}
 }
 

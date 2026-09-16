@@ -424,15 +424,6 @@ func renderWeaver(c Config, _ bool) ProductSpec {
 		"WEAVER_SERVER_1_PASSWORD=" + c.NNTPPassword,
 		"WEAVER_SERVER_1_CONNECTIONS=" + strconv.Itoa(c.Connections),
 		"WEAVER_SERVER_1_ACTIVE=true",
-		// A server added through Weaver's own UI is probed by its connection
-		// test, which records whether the server advertises PIPELINING. A
-		// server seeded from the environment is not probed, so without this
-		// the install runs every connection one article per round trip and
-		// its depth explorer never starts. The benchmark server advertises
-		// PIPELINING (the chain asserts it), so this renders the server as a
-		// fresh install would record it, as SABnzbd's pipelining_requests
-		// does for SABnzbd.
-		"WEAVER_SERVER_1_PIPELINING=true",
 		// Weaver's first-run access policy hands an anonymous browser session
 		// only to peers on its trusted-network list; without one, an install
 		// with no login serves a setup notice and refuses every GraphQL call.
