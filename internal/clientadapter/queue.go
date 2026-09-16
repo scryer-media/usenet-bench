@@ -319,13 +319,13 @@ func monitorQueue(
 				case jobUnknown:
 					continue
 				case jobQueued:
-					job.lastObservedAt = requestStartedAt
+					job.lastObservedAt = observation.pendingSince(requestStartedAt)
 					job.lastStatus = observation.status
 				case jobActive:
 					if job.result.ProcessingStartedAt.IsZero() {
 						job.result.ProcessingStartedAt = observedAt
 					}
-					job.lastObservedAt = requestStartedAt
+					job.lastObservedAt = observation.pendingSince(requestStartedAt)
 					job.lastStatus = observation.status
 				case jobComplete:
 					job.result.TerminalStatus = "succeeded"

@@ -52,6 +52,21 @@ const (
 type jobObservation struct {
 	state  jobObservationState
 	status string
+	// pendingAt, when set on a queued or active observation, is a later
+	// instant than the start of the whole observation at which the job was
+	// still not observable as terminal. An observer that makes more than one
+	// request sets it to the start of the request that would have shown the
+	// job terminal, so the terminal lower bound does not also carry the
+	// round trips that came before it.
+	pendingAt time.Time
+}
+
+// pendingSince returns the lower bound a non-terminal observation supports.
+func (observation jobObservation) pendingSince(requestStartedAt time.Time) time.Time {
+	if observation.pendingAt.After(requestStartedAt) {
+		return observation.pendingAt
+	}
+	return requestStartedAt
 }
 
 func classifyLiveStatus(status string) jobObservation {
@@ -178,7 +193,7 @@ func (api *API) WaitCompleteWithObservation(ctx context.Context, jobID string, i
 				// it needs to record one.
 				return TerminalObservation{LowerBound: lowerBound, ObservedAt: observedAt}, &TerminalFailureError{JobID: jobID, Status: observation.status}
 			case jobQueued, jobActive:
-				lowerBound = requestStartedAt
+				lowerBound = observation.pendingSince(requestStartedAt)
 			}
 		}
 		timer := time.NewTimer(interval)
@@ -325,6 +340,11 @@ func (api *sabAPI) observe(ctx context.Context, jobIDs []string) (map[string]job
 	if historyLimit < 100 {
 		historyLimit = 100
 	}
+	// SABnzbd lists a job as terminal only in its history. A history answer
+	// without a terminal entry therefore shows the job was not yet terminal
+	// at some instant after this request started, which is a tighter bound
+	// than the start of the queue request before it.
+	historyRequestedAt := time.Now()
 	if err := api.get(ctx, "history", url.Values{"limit": {strconv.Itoa(historyLimit)}}, &historyResponse); err != nil {
 		return nil, fmt.Errorf("observe SABnzbd history: %w", err)
 	}
@@ -342,6 +362,12 @@ func (api *sabAPI) observe(ctx context.Context, jobIDs []string) (map[string]job
 			observations[id] = jobObservation{state: jobFailed, status: status}
 		default:
 			observations[id] = jobObservation{state: jobActive, status: status}
+		}
+	}
+	for id, observation := range observations {
+		if observation.state == jobQueued || observation.state == jobActive {
+			observation.pendingAt = historyRequestedAt
+			observations[id] = observation
 		}
 	}
 	return observations, nil
