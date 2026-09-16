@@ -38,6 +38,9 @@ func TestWeaverRenderUsesServiceLaunchAndStockExtractionDefault(t *testing.T) {
 	if !strings.Contains(string(spec.Content), "WEAVER_DIRECT_UNPACK=on\n") {
 		t.Fatalf("native Weaver environment must render direct unpack on (the shipping default) in every profile:\n%s", spec.Content)
 	}
+	if !strings.Contains(string(spec.Content), "WEAVER_SERVER_1_PIPELINING=true\n") {
+		t.Fatalf("native Weaver must record the server's PIPELINING support, or every connection fetches one article per round trip:\n%s", spec.Content)
+	}
 	if !strings.Contains(string(spec.Content), "WEAVER_PROPAGATION_DELAY_SECS=0\n") {
 		t.Fatalf("native Weaver environment must disable the propagation hold; the other clients run with it at zero and every benchmark NZB is freshly posted:\n%s", spec.Content)
 	}

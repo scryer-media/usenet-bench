@@ -150,6 +150,15 @@ func renderWeaver(cfg Config) productSpec {
 		"WEAVER_SERVER_1_PASSWORD=" + cfg.NNTPPassword,
 		"WEAVER_SERVER_1_CONNECTIONS=" + strconv.Itoa(cfg.Connections),
 		"WEAVER_SERVER_1_ACTIVE=true",
+		// A server added through Weaver's own UI is probed by its connection
+		// test, which records whether the server advertises PIPELINING. A
+		// server seeded from the environment is not probed, so without this
+		// the install runs every connection one article per round trip and
+		// its depth explorer never starts. The benchmark server advertises
+		// PIPELINING (the chain asserts it), so this renders the server as a
+		// fresh install would record it, as SABnzbd's pipelining_requests
+		// does for SABnzbd.
+		"WEAVER_SERVER_1_PIPELINING=true",
 		// A fresh native install trusts no peer until its first-run wizard is
 		// completed from the machine's own browser; loopback is offered the
 		// wizard, not a session. Pinning loopback as trusted from the
