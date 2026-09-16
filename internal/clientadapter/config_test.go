@@ -212,6 +212,9 @@ func TestNZBGetDeletesArchivesAfterUnpackForEveryProfile(t *testing.T) {
 		if !strings.Contains(string(spec.ConfigContent), "UnpackCleanupDisk=yes\n") {
 			t.Fatalf("%s NZBGet config keeps archives after unpack:\n%s", profile, spec.ConfigContent)
 		}
+		if !strings.Contains(string(spec.ConfigContent), "ParCleanupDisk=yes\n") {
+			t.Fatalf("%s NZBGet config keeps PAR2 files after the check:\n%s", profile, spec.ConfigContent)
+		}
 	}
 }
 

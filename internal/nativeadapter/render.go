@@ -386,9 +386,11 @@ func renderNZBGet(cfg Config, directUnpack bool) productSpec {
 		"ParRepair=yes",
 		"Unpack=yes",
 		// NZBGet's shipped config deletes the archives once they unpack
-		// cleanly. Unstated, the default keeps them, and the output then holds
-		// files no other client leaves behind.
+		// cleanly, and the PAR2 material once the check is done. Unstated,
+		// the code defaults keep both, and the output then holds files no
+		// other client leaves behind.
 		"UnpackCleanupDisk=yes",
+		"ParCleanupDisk=yes",
 		"UnrarCmd=" + NZBGetUnpacker(program, NZBGetUnrarNames),
 		"SevenZipCmd=" + NZBGetUnpacker(program, NZBGetSevenZipNames),
 		// A packaged install can ship post-processing extensions in its own

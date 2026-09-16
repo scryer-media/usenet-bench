@@ -20,6 +20,9 @@ type OutputVerification struct {
 	FixtureID        string               `json:"fixture_id"`
 	Files            []VerifiedOutputFile `json:"files"`
 	RetainedSidecars []VerifiedOutputFile `json:"retained_sidecars,omitempty"`
+	// SmallMembers lists the under-floor files a pinned fixture's oracle
+	// recorded that this client also produced, matched by content.
+	SmallMembers []VerifiedOutputFile `json:"small_members,omitempty"`
 	// ClientBookkeeping lists the files a client is known to leave in its own
 	// completion directory for itself, which were checked and set aside.
 	ClientBookkeeping []string `json:"client_bookkeeping,omitempty"`
@@ -73,6 +76,7 @@ func VerifyClientOutput(fixtureDir, outputDir string, client Client) (OutputVeri
 		return OutputVerification{}, err
 	}
 	reference := ""
+	var smallMembers []fixture.FileDigest
 	if len(manifest.ExpectedFiles) == 0 && manifest.External != nil {
 		pinned, found, err := loadPinnedOutput(fixtureDir)
 		if err != nil {
@@ -82,6 +86,7 @@ func VerifyClientOutput(fixtureDir, outputDir string, client Client) (OutputVeri
 			return pinOutput(fixtureDir, outputDir, manifest, actual)
 		}
 		manifest.ExpectedFiles = pinned.Files
+		smallMembers = pinned.SmallFiles
 		reference = ReferencePinned
 	}
 	allCandidates := make([]discoveredFile, 0)
@@ -151,6 +156,16 @@ func VerifyClientOutput(fixtureDir, outputDir string, client Client) (OutputVeri
 			}
 		}
 		if matched == nil {
+			// An under-floor member the oracle recorded is matched by content
+			// alone: a client may name a small extracted file after its own
+			// job rather than after the archive member.
+			member, err := matchSmallMember(smallMembers, candidate, used, digests, outputDir, &result)
+			if err != nil {
+				return OutputVerification{}, err
+			}
+			if member {
+				continue
+			}
 			return OutputVerification{}, fmt.Errorf("unexpected or modified retained output: %s", candidate.path)
 		}
 		used[candidate.path] = true
@@ -162,6 +177,35 @@ func VerifyClientOutput(fixtureDir, outputDir string, client Client) (OutputVeri
 		result.RetainedSidecars = append(result.RetainedSidecars, *matched)
 	}
 	return result, nil
+}
+
+// matchSmallMember accepts one retained file as an under-floor member the
+// oracle recorded, and reports whether it did. Each recorded member satisfies
+// at most one file, so two copies of the same bytes still fail the run.
+func matchSmallMember(members []fixture.FileDigest, candidate discoveredFile, used map[string]bool, digests map[string]string, outputDir string, result *OutputVerification) (bool, error) {
+	for _, member := range members {
+		taken := false
+		for _, previous := range result.SmallMembers {
+			if previous.ExpectedPath == member.Path {
+				taken = true
+				break
+			}
+		}
+		if taken {
+			continue
+		}
+		matched, err := verifyExpectedFile(member, []discoveredFile{candidate}, used, digests, outputDir)
+		if err != nil {
+			return false, err
+		}
+		if matched == nil {
+			continue
+		}
+		used[candidate.path] = true
+		result.SmallMembers = append(result.SmallMembers, *matched)
+		return true, nil
+	}
+	return false, nil
 }
 
 // loadPinnedOutput reads an external fixture's pinned output, if a run has
@@ -182,7 +226,7 @@ func loadPinnedOutput(fixtureDir string) (fixture.PinnedOutput, bool, error) {
 	if pinned.SchemaVersion != 1 || len(pinned.Files) == 0 {
 		return fixture.PinnedOutput{}, false, fmt.Errorf("pinned output %s is incomplete", path)
 	}
-	for _, file := range pinned.Files {
+	for _, file := range append(append([]fixture.FileDigest{}, pinned.Files...), pinned.SmallFiles...) {
 		if file.Size <= 0 || len(file.BLAKE3) != 64 {
 			return fixture.PinnedOutput{}, false, fmt.Errorf("pinned output %s has an invalid entry for %s", path, file.Path)
 		}
@@ -202,6 +246,7 @@ func pinOutput(fixtureDir, outputDir string, manifest fixture.GeneratedManifest,
 		posted[filepath.Base(file.Path)] = true
 	}
 	candidates := make([]discoveredFile, 0)
+	small := make([]discoveredFile, 0)
 	for name, files := range actual {
 		if posted[name] || strings.HasPrefix(name, ".") {
 			continue
@@ -209,13 +254,16 @@ func pinOutput(fixtureDir, outputDir string, manifest fixture.GeneratedManifest,
 		for _, file := range files {
 			if file.size >= minimumPinnedFileBytes {
 				candidates = append(candidates, file)
+				continue
 			}
+			small = append(small, file)
 		}
 	}
 	if len(candidates) == 0 {
 		return OutputVerification{}, fmt.Errorf("output %s holds nothing extracted from %s to pin: every file is either one the post carried or under %d bytes", outputDir, manifest.Case.ID, minimumPinnedFileBytes)
 	}
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].path < candidates[j].path })
+	sort.Slice(small, func(i, j int) bool { return small[i].path < small[j].path })
 	pinned := fixture.PinnedOutput{
 		SchemaVersion: 1,
 		FixtureID:     manifest.Case.ID,
@@ -235,6 +283,21 @@ func pinOutput(fixtureDir, outputDir string, manifest fixture.GeneratedManifest,
 		relative = filepath.ToSlash(relative)
 		pinned.Files = append(pinned.Files, fixture.FileDigest{Path: relative, Size: candidate.size, BLAKE3: digest})
 		result.Files = append(result.Files, VerifiedOutputFile{ExpectedPath: relative, ActualPath: relative, Size: candidate.size, BLAKE3: digest})
+	}
+	// An archive can carry a file under the floor -- a readme beside the
+	// payload -- and the floor cannot tell one from a client's own bookkeeping.
+	// Recording both here costs nothing: a later client either reproduces the
+	// bytes or does not, and its own bookkeeping never matches them.
+	for _, candidate := range small {
+		digest, err := hashFile(candidate.path)
+		if err != nil {
+			return OutputVerification{}, err
+		}
+		relative, err := filepath.Rel(outputDir, candidate.path)
+		if err != nil {
+			return OutputVerification{}, err
+		}
+		pinned.SmallFiles = append(pinned.SmallFiles, fixture.FileDigest{Path: filepath.ToSlash(relative), Size: candidate.size, BLAKE3: digest})
 	}
 	contents, err := json.MarshalIndent(pinned, "", "  ")
 	if err != nil {

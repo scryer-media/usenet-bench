@@ -94,3 +94,49 @@ func TestVerifyOutputRefusesToPinAnOutputWithNothingExtracted(t *testing.T) {
 		t.Fatalf("a refused pin still wrote %s: %v", fixture.PinnedOutputName, err)
 	}
 }
+
+func TestVerifyOutputAcceptsASmallPinnedMemberUnderAClientChosenName(t *testing.T) {
+	fixtureDir := t.TempDir()
+	writeExternalVerificationManifest(t, fixtureDir)
+	payload := bytes.Repeat([]byte("payload-"), (minimumPinnedFileBytes/8)+1)
+	// Archives carry small files too: a readme beside the payload is below the
+	// floor that keeps client bookkeeping out of the oracle.
+	readme := []byte("what this post is")
+
+	first := t.TempDir()
+	writeOutputFile(t, filepath.Join(first, "job", "test.bin"), payload)
+	writeOutputFile(t, filepath.Join(first, "job", "test-explanation.txt"), readme)
+	pinned, err := VerifyOutput(fixtureDir, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pinned.Files) != 1 {
+		t.Fatalf("pinned %d required files, want only the payload", len(pinned.Files))
+	}
+
+	// A client that names the small file after its own job still produced the
+	// bytes the post carried, so the run stands.
+	renamed := t.TempDir()
+	writeOutputFile(t, filepath.Join(renamed, "sab-job", "test.bin"), payload)
+	writeOutputFile(t, filepath.Join(renamed, "sab-job", "sab-job-explanation.txt"), readme)
+	matched, err := VerifyOutput(fixtureDir, renamed)
+	if err != nil {
+		t.Fatalf("a renamed small member failed the run: %v", err)
+	}
+	if len(matched.SmallMembers) != 1 || matched.SmallMembers[0].ActualPath != "sab-job/sab-job-explanation.txt" {
+		t.Fatalf("small members = %#v, want the renamed copy", matched.SmallMembers)
+	}
+
+	// Leaving it out is allowed; leaving something else behind is not.
+	absent := t.TempDir()
+	writeOutputFile(t, filepath.Join(absent, "job", "test.bin"), payload)
+	if _, err := VerifyOutput(fixtureDir, absent); err != nil {
+		t.Fatalf("a client that deleted the small member failed the run: %v", err)
+	}
+	foreign := t.TempDir()
+	writeOutputFile(t, filepath.Join(foreign, "job", "test.bin"), payload)
+	writeOutputFile(t, filepath.Join(foreign, "job", "test-explanation.txt"), []byte("something else"))
+	if _, err := VerifyOutput(fixtureDir, foreign); err == nil {
+		t.Fatal("a small file the oracle never saw passed verification")
+	}
+}

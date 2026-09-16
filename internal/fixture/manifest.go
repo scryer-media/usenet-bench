@@ -106,6 +106,11 @@ type PinnedOutput struct {
 	PinnedAt      string       `json:"pinned_at"`
 	PinnedFrom    string       `json:"pinned_from"`
 	Files         []FileDigest `json:"files"`
+	// SmallFiles are the extracted files the pinning run left that were too
+	// small to tell apart from a client's own bookkeeping. A later client may
+	// produce them or not, and may name them after its own job, so they are
+	// accepted by content and never required.
+	SmallFiles []FileDigest `json:"small_files,omitempty"`
 }
 
 // CompressionDetails is the writer's measured result for this fixture.

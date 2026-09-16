@@ -76,6 +76,8 @@ func main() {
 		err = preflight(os.Args[2:])
 	case "import-nzb":
 		err = importNZB(os.Args[2:])
+	case "attest":
+		err = attestCorpus(os.Args[2:], os.Stdout)
 	case "verify-output":
 		err = verifyOutput(os.Args[2:])
 	case "delete-output":
@@ -1169,6 +1171,7 @@ Commands:
   summarize      Produce paired per-stratum statistics from verified sequential artifacts
   preflight      Check a host: target, client executables, and a raw stack
   import-nzb     Make a fixture from an NZB posted on a real provider
+  attest         Write article-size provenance for a corpus seeded without it
   verify-output  Verify a client completion directory against fixture hashes
   delete-output  Empty a verified client completion directory
 

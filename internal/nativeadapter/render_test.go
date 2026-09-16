@@ -103,6 +103,9 @@ func TestNativeNZBGetDeletesArchivesAfterUnpack(t *testing.T) {
 	if !strings.Contains(string(spec.Content), "UnpackCleanupDisk=yes\n") {
 		t.Fatalf("NZBGet config keeps archives after unpack:\n%s", spec.Content)
 	}
+	if !strings.Contains(string(spec.Content), "ParCleanupDisk=yes\n") {
+		t.Fatalf("NZBGet config keeps PAR2 files after the check:\n%s", spec.Content)
+	}
 }
 
 func TestNativeNZBGetVerifiedTLSEnablesCAValidation(t *testing.T) {
