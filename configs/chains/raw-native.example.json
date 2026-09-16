@@ -73,6 +73,32 @@
         "repetitions": 3,
         "seed": 20260906
       }
+    },
+    {
+      "name": "N500-depth-eqt-local",
+      "display_name": "Native pipeline depth discovery on a single download over a very high-latency link",
+      "mode": "sequential",
+      "plan": "plan-N500-depth-eqt-tls-local.json",
+      "fixtures_root": "../fixtures",
+      "artifacts": "artifacts-N500-depth-eqt-local",
+      "server_link": "1gbit",
+      "server_rtt": "500ms",
+      "summarize_baselines": [
+        "sabnzbd",
+        "nzbget"
+      ],
+      "article_size": "750k",
+      "plan_spec": {
+        "fixtures": [
+          "direct-mkv-200mb"
+        ],
+        "transports": [
+          "tls"
+        ],
+        "profile": "equivalent-throughput",
+        "repetitions": 3,
+        "seed": 20260916
+      }
     }
   ]
 }
