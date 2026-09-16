@@ -20,6 +20,9 @@ type OutputVerification struct {
 	FixtureID        string               `json:"fixture_id"`
 	Files            []VerifiedOutputFile `json:"files"`
 	RetainedSidecars []VerifiedOutputFile `json:"retained_sidecars,omitempty"`
+	// RetainedRepairMaterial lists the posted recovery files a client left in
+	// its completion directory, each matching the digest it was posted under.
+	RetainedRepairMaterial []VerifiedOutputFile `json:"retained_repair_material,omitempty"`
 	// SmallMembers lists the under-floor files a pinned fixture's oracle
 	// recorded that this client also produced, matched by content.
 	SmallMembers []VerifiedOutputFile `json:"small_members,omitempty"`
@@ -125,6 +128,10 @@ func VerifyClientOutput(fixtureDir, outputDir string, client Client) (OutputVeri
 	// copies must match the posted digest; archives and arbitrary extras never
 	// receive a filename-extension exemption.
 	allowed := allowedRetainedSidecars(manifest)
+	// The recovery material a repair lane posts is in the same position: no
+	// client is obliged to delete a .rev or a parity set once it has served
+	// its purpose, and the ones that keep it keep it byte for byte.
+	repair := allowedRetainedRepairMaterial(manifest)
 	for _, candidate := range allCandidates {
 		if used[candidate.path] {
 			continue
@@ -164,6 +171,13 @@ func VerifyClientOutput(fixtureDir, outputDir string, client Client) (OutputVeri
 				return OutputVerification{}, err
 			}
 			if member {
+				continue
+			}
+			kept, err := matchRepairMaterial(repair, candidate, used, digests, outputDir, &result)
+			if err != nil {
+				return OutputVerification{}, err
+			}
+			if kept {
 				continue
 			}
 			return OutputVerification{}, fmt.Errorf("unexpected or modified retained output: %s", candidate.path)
@@ -367,6 +381,63 @@ func isClientBookkeeping(client Client, outputDir string, candidate discoveredFi
 		}
 	}
 	return true, nil
+}
+
+// allowedRetainedRepairMaterial names the posted files a repair lane added on
+// top of the archive itself: everything posted that is not one of the intact
+// source volumes. That is the parity set or the recovery volume, taken from
+// the manifest's own structure rather than from a filename extension, so a
+// damaged volume — which keeps its source path and only changes its bytes —
+// is never mistaken for recovery material. A corpus seeded before the source
+// volumes were recorded names nothing here, and stays as strict as it was.
+func allowedRetainedRepairMaterial(m fixture.GeneratedManifest) []fixture.FileDigest {
+	if len(m.SourceArchiveFiles) == 0 {
+		return nil
+	}
+	source := make(map[string]bool, len(m.SourceArchiveFiles))
+	for _, f := range m.SourceArchiveFiles {
+		source[f.Path] = true
+	}
+	var allowed []fixture.FileDigest
+	for _, f := range m.ArchiveFiles {
+		if source[f.Path] {
+			continue
+		}
+		allowed = append(allowed, f)
+	}
+	return allowed
+}
+
+// matchRepairMaterial accepts one retained file as posted recovery material,
+// and reports whether it did. A posted file satisfies at most one candidate,
+// so a second copy of the same recovery volume still fails the run.
+func matchRepairMaterial(material []fixture.FileDigest, candidate discoveredFile, used map[string]bool, digests map[string]string, outputDir string, result *OutputVerification) (bool, error) {
+	for _, posted := range material {
+		if filepath.Base(posted.Path) != filepath.Base(candidate.path) {
+			continue
+		}
+		taken := false
+		for _, previous := range result.RetainedRepairMaterial {
+			if previous.ExpectedPath == posted.Path {
+				taken = true
+				break
+			}
+		}
+		if taken {
+			continue
+		}
+		matched, err := verifyExpectedFile(posted, []discoveredFile{candidate}, used, digests, outputDir)
+		if err != nil {
+			return false, err
+		}
+		if matched == nil {
+			continue
+		}
+		used[candidate.path] = true
+		result.RetainedRepairMaterial = append(result.RetainedRepairMaterial, *matched)
+		return true, nil
+	}
+	return false, nil
 }
 
 func allowedRetainedSidecars(m fixture.GeneratedManifest) []fixture.FileDigest {
