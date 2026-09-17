@@ -242,7 +242,7 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.RunID) == "" || strings.TrimSpace(c.Network) == "" {
 		return fmt.Errorf("run id and Docker network are required")
 	}
-	if c.Client != benchmark.Weaver && c.Client != benchmark.SABnzbd && c.Client != benchmark.NZBGet {
+	if !benchmark.KnownClient(c.Client) {
 		return fmt.Errorf("unsupported client %q", c.Client)
 	}
 	if c.ArchiveToolchain != benchmark.VanillaArchiveToolchain && c.ArchiveToolchain != benchmark.RarparArchiveToolchain {
@@ -385,6 +385,11 @@ func (c Config) RenderProductConfig() (ProductSpec, error) {
 		spec = renderSABnzbd(c, directUnpack)
 	case benchmark.NZBGet:
 		spec = renderNZBGet(c, directUnpack)
+	case benchmark.NZBFast:
+		var err error
+		if spec, err = renderNZBFast(c); err != nil {
+			return ProductSpec{}, err
+		}
 	default:
 		return ProductSpec{}, fmt.Errorf("unsupported client %q", c.Client)
 	}
@@ -655,6 +660,79 @@ func renderNZBGet(c Config, directUnpack bool) ProductSpec {
 		"",
 	}, "\n")
 	return ProductSpec{APIPort: 6789, ExposeAPI: true, ConfigName: "nzbget.conf", ConfigContent: []byte(content), Environment: linuxServerEnvironment()}
+}
+
+// nzbFastServerConfig renders the server list nzbfast reads at startup. The
+// file holds nothing else: every other setting is left at what the release
+// ships, exactly as a fresh install that has only been given its provider.
+func nzbFastServerConfig(host, port, username, password string, useTLS bool, connections int) ([]byte, error) {
+	portNumber, err := strconv.Atoi(port)
+	if err != nil || portNumber < 1 || portNumber > 65535 {
+		return nil, fmt.Errorf("nzbfast needs a numeric NNTP port, got %q", port)
+	}
+	type server struct {
+		Host        string `json:"host"`
+		Port        int    `json:"port"`
+		TLS         bool   `json:"tls"`
+		Username    string `json:"username"`
+		Password    string `json:"password"`
+		Connections int    `json:"connections"`
+	}
+	content, err := json.MarshalIndent(struct {
+		Servers []server `json:"servers"`
+	}{Servers: []server{{Host: host, Port: portNumber, TLS: useTLS, Username: username, Password: password, Connections: connections}}}, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("encode nzbfast server list: %w", err)
+	}
+	return append(content, '\n'), nil
+}
+
+// nzbFastLabEnvironment is the part of nzbfast's environment the lab settles
+// rather than leaving to the release.
+//
+// nzbfast looks a finished download up against public metadata services to
+// name it. Every benchmark title is invented and the lab has no business on
+// the internet mid-run, so those lookups are switched off through the
+// product's own documented gate. Its download, verify, repair and extract
+// paths are untouched.
+//
+// nzbfast also ships with recoverable deletes: the archives and recovery files
+// it cleans up after a job are moved into a trash folder (the desktop's, or
+// one inside the completion directory) rather than removed. Weaver, SABnzbd
+// and NZBGet all remove theirs, so nzbfast is told to as well, again through
+// its own gate: every client then pays for the same delete, the completion
+// directory holds no parked copies. The audit record shows both.
+//
+// Nothing else is set: no cache, thread, connection or unpack tuning. The
+// product is measured as it ships.
+func nzbFastLabEnvironment() []string {
+	return []string{"NZBFAST_NO_ENRICH=1", "NZBFAST_NO_TRASH=1"}
+}
+
+// renderNZBFast describes the published nzbfast image, which starts the
+// daemon through its own entrypoint: the server list comes from
+// /config/config.json and everything else from the environment. nzbfast
+// downloads, verifies and extracts in one pass in every configuration, so the
+// stock and equivalent-throughput profiles render the same product. It writes
+// into the completion directory from the start and has no intermediate
+// directory to place.
+func renderNZBFast(c Config) (ProductSpec, error) {
+	content, err := nzbFastServerConfig(c.NNTPHost, c.NNTPPort, c.NNTPUsername, c.NNTPPassword, c.NNTPUseTLS, c.Connections)
+	if err != nil {
+		return ProductSpec{}, err
+	}
+	env := []string{
+		"NZBFAST_APIKEY=" + apiKey,
+		"NZBFAST_OUT=/downloads/complete",
+	}
+	env = append(env, nzbFastLabEnvironment()...)
+	// The image's entrypoint honors PUID/PGID the way the LinuxServer images
+	// do, which keeps the per-run bind mounts owned by the benchmark user.
+	env = append(env, linuxServerEnvironment()...)
+	if c.Transport == benchmark.TLS && c.TLSValidation == benchmark.TLSCAVerified {
+		env = append(env, "NZBFAST_EXTRA_CA=/benchmark-ca/nntp-ca.pem")
+	}
+	return ProductSpec{APIPort: 6789, ExposeAPI: true, ConfigName: "config.json", ConfigContent: content, Environment: env}, nil
 }
 
 func linuxServerEnvironment() []string {

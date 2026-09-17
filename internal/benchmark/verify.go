@@ -1,6 +1,7 @@
 package benchmark
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -345,11 +346,24 @@ const (
 	weaverOutputMarkerPrefix = "weaver-output-v1:"
 )
 
+// nzbFastManifest is the file nzbfast writes into a finished job's directory:
+// the block checksums of the recovery set it verified, kept so the payload can
+// still be checked once the recovery files themselves are cleaned up. It is
+// written only for a job that had a recovery set, and the product ships with it
+// on, so the harness takes it rather than configuring it away.
+const nzbFastManifest = ".nzbfast.manifest"
+
 // isClientBookkeeping reports whether an otherwise unexpected output file is a
-// known client bookkeeping file in its exact form: Weaver's output marker, from
-// a Weaver run, in the output root or a job directory directly beneath it.
+// known client bookkeeping file in its exact form, written by the client that
+// owns it, in the output root or a job directory directly beneath it.
 func isClientBookkeeping(client Client, outputDir string, candidate discoveredFile) (bool, error) {
-	if client != Weaver || filepath.Base(candidate.path) != weaverOutputMarker {
+	var check func(discoveredFile) (bool, error)
+	switch {
+	case client == Weaver && filepath.Base(candidate.path) == weaverOutputMarker:
+		check = isWeaverOutputMarker
+	case client == NZBFast && filepath.Base(candidate.path) == nzbFastManifest:
+		check = isNZBFastManifest
+	default:
 		return false, nil
 	}
 	parent, err := filepath.Rel(outputDir, filepath.Dir(candidate.path))
@@ -359,6 +373,42 @@ func isClientBookkeeping(client Client, outputDir string, candidate discoveredFi
 	if parent != "." && strings.ContainsRune(filepath.ToSlash(parent), '/') {
 		return false, nil
 	}
+	return check(candidate)
+}
+
+// isNZBFastManifest checks the manifest's exact form: a single JSON object at
+// version 1 carrying every field the product writes and nothing else. What the
+// checksums inside it say about the payload is the client's own claim, which
+// the harness verifies against the fixture itself and never reads from here.
+func isNZBFastManifest(candidate discoveredFile) (bool, error) {
+	contents, err := os.ReadFile(candidate.path)
+	if err != nil {
+		return false, err
+	}
+	var document struct {
+		Version   *int              `json:"v"`
+		Created   *int64            `json:"created"`
+		NZBSHA    *string           `json:"nzb_sha"`
+		Job       *string           `json:"job"`
+		BlockSize *int64            `json:"block_size"`
+		Files     []json.RawMessage `json:"files"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(contents))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&document); err != nil {
+		return false, nil
+	}
+	if decoder.More() {
+		return false, nil
+	}
+	if document.Version == nil || *document.Version != 1 {
+		return false, nil
+	}
+	return document.Created != nil && document.NZBSHA != nil && document.Job != nil &&
+		document.BlockSize != nil && document.Files != nil, nil
+}
+
+func isWeaverOutputMarker(candidate discoveredFile) (bool, error) {
 	wantSize := int64(len(weaverOutputMarkerPrefix) + 64 + 1)
 	if candidate.size != wantSize {
 		return false, nil

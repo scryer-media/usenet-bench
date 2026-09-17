@@ -1,7 +1,7 @@
 # usenet-bench
 
-A reproducible, product-neutral download benchmark for **Weaver**, **SABnzbd**
-and **NZBGet**.
+A reproducible, product-neutral download benchmark for **Weaver**, **SABnzbd**,
+**NZBGet** and **nzbfast**.
 
 It does not guess what a "typical Usenet release" looks like. It generates a
 declared matrix of clean and deliberately damaged multi-volume archive
@@ -1062,6 +1062,14 @@ profiles keep the full client-by-packaging matrix for every
 | Weaver | digest-pinned image, public GraphQL API | local service, public GraphQL API | local service, public GraphQL API |
 | SABnzbd | digest-pinned image, public API | native distributable, public API | native distributable, public API |
 | NZBGet | digest-pinned image, JSON-RPC | native executable, JSON-RPC | native executable, JSON-RPC |
+| nzbfast | digest-pinned image, SABnzbd-compatible API | not run | not run |
+
+nzbfast is a container-only client here. It is benchmarked from its published,
+digest-pinned image — started by the suite's own `docker run`, never from the
+project's compose file — so the suite never installs it on a machine it is
+measuring. The native lanes refuse it rather than leaving that to whatever a
+catalog happens to declare. It serves the SABnzbd control API, so it is driven
+through the same requests SABnzbd is rather than through a path of its own.
 
 The published suite runs `--profile equivalent-throughput` only: SABnzbd
 and NZBGet are compared at their best, with direct unpack on, rather than at
@@ -1082,7 +1090,15 @@ deliberately overridden in both renders:
 five minutes old before downloading it; SABnzbd and NZBGet ship with that
 delay at zero, and every benchmark NZB is freshly posted by construction, so
 leaving the hold on would time the poster's clock rather than the client.
-The override is in the audited environment of every Weaver run.
+The override is in the audited environment of every Weaver run. nzbfast
+downloads, verifies and extracts in one pass however it is started, so its two
+profile renders are identical and it carries no performance settings from the
+suite at all: the rendered file is the provider and nothing else, and its
+environment only fixes the API key, the output directory, and the two
+behaviours that would otherwise leave the bench — a lookup against public
+metadata services, and a cleanup that parks its archives in a trash folder
+inside the completion directory instead of deleting them the way every other
+client does.
 `archive_toolchain` is a
 first-class plan, adapter, config and result field: `vanilla` is the stock
 benchmark, and the optional `rarpar` Docker lanes (see below) are never pooled

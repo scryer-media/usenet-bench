@@ -131,7 +131,7 @@ func (c AdapterCatalog) Validate() error {
 	}
 	seen := map[string]bool{}
 	for _, adapter := range c.Adapters {
-		if adapter.Client != Weaver && adapter.Client != SABnzbd && adapter.Client != NZBGet {
+		if !KnownClient(adapter.Client) {
 			return fmt.Errorf("adapter catalog has unsupported client %q", adapter.Client)
 		}
 		if _, err := DescribeExecutionTarget(adapter.Target); err != nil {

@@ -278,6 +278,20 @@ func TestNativeSequentialQueueRejectsMultipleJobs(t *testing.T) {
 	}
 }
 
+// The suite benchmarks nzbfast from the published image and never installs it
+// on the machine it is measuring, so the native lane refuses it outright
+// rather than leaving the decision to whatever a catalog happens to declare.
+func TestNativeLaneRefusesTheContainerOnlyClient(t *testing.T) {
+	cfg := testConfig(benchmark.NZBFast)
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "container-only") {
+		t.Fatalf("err = %v, want the native lane to refuse a container-only client", err)
+	}
+	if _, err := renderProduct(cfg); err == nil {
+		t.Fatal("the native lane must have no rendering for a container-only client")
+	}
+}
+
 func testConfig(client benchmark.Client) Config {
 	root := filepath.Join("/tmp", "nntpbench-nativeadapter-test")
 	return Config{

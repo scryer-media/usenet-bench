@@ -104,6 +104,10 @@ func NewAPI(client benchmark.Client, endpoint string) (*API, error) {
 		product = &sabAPI{baseURL: endpoint, client: &http.Client{Timeout: 30 * time.Second}}
 	case benchmark.NZBGet:
 		product = &nzbgetAPI{baseURL: endpoint, client: &http.Client{Timeout: 30 * time.Second}}
+	case benchmark.NZBFast:
+		// nzbfast serves the SABnzbd control API, so it is driven through the
+		// same requests SABnzbd is rather than through a fast path of its own.
+		product = &sabAPI{baseURL: endpoint, client: &http.Client{Timeout: 30 * time.Second}, dialect: sabDialectNZBFast}
 	case benchmark.Weaver:
 		jar, err := cookiejar.New(nil)
 		if err != nil {
@@ -223,22 +227,47 @@ func newProductAPI(cfg Config, endpoint string) (productAPI, error) {
 	return api.product, nil
 }
 
+// sabDialect names which product is answering the SABnzbd control API. The
+// requests are the same for both; what differs is where the product states its
+// own version and what it may do with a submission it takes for a duplicate.
+type sabDialect uint8
+
+const (
+	sabDialectSABnzbd sabDialect = iota
+	sabDialectNZBFast
+)
+
 type sabAPI struct {
 	baseURL string
 	client  *http.Client
+	dialect sabDialect
+}
+
+func (api *sabAPI) productName() string {
+	if api.dialect == sabDialectNZBFast {
+		return "nzbfast"
+	}
+	return "SABnzbd"
 }
 
 func (api *sabAPI) waitReady(ctx context.Context) (string, error) {
 	var response struct {
 		Version string `json:"version"`
+		NZBFast string `json:"nzbfast"`
 	}
 	if err := api.get(ctx, "version", nil, &response); err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(response.Version) == "" {
-		return "", fmt.Errorf("SABnzbd version response was empty")
+	version := response.Version
+	if api.dialect == sabDialectNZBFast {
+		// `version` is the SABnzbd release nzbfast presents itself as to
+		// Sonarr and Radarr; its own release is stated beside it.
+		version = response.NZBFast
 	}
-	return response.Version, nil
+	if strings.TrimSpace(version) == "" {
+		return "", fmt.Errorf("%s version response was empty", api.productName())
+	}
+	return strings.TrimSpace(version), nil
 }
 
 func (api *sabAPI) queue(ctx context.Context, nzbPath, archivePassword string, options queueOptions) (string, error) {
@@ -251,13 +280,13 @@ func (api *sabAPI) queue(ctx context.Context, nzbPath, archivePassword string, o
 	writer := multipart.NewWriter(&body)
 	part, err := writer.CreateFormFile("name", options.filename(nzbPath))
 	if err != nil {
-		return "", fmt.Errorf("create SABnzbd NZB request: %w", err)
+		return "", fmt.Errorf("create %s NZB request: %w", api.productName(), err)
 	}
 	if _, err := io.Copy(part, file); err != nil {
-		return "", fmt.Errorf("copy NZB into SABnzbd request: %w", err)
+		return "", fmt.Errorf("copy NZB into %s request: %w", api.productName(), err)
 	}
 	if err := writer.Close(); err != nil {
-		return "", fmt.Errorf("close SABnzbd NZB request: %w", err)
+		return "", fmt.Errorf("close %s NZB request: %w", api.productName(), err)
 	}
 	params := url.Values{"mode": {"addfile"}, "output": {"json"}, "apikey": {apiKey}}
 	if options.forceAccept {
@@ -271,18 +300,29 @@ func (api *sabAPI) queue(ctx context.Context, nzbPath, archivePassword string, o
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, api.apiURL(params), &body)
 	if err != nil {
-		return "", fmt.Errorf("build SABnzbd queue request: %w", err)
+		return "", fmt.Errorf("build %s queue request: %w", api.productName(), err)
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	var response struct {
 		Status bool     `json:"status"`
 		NZOIDs []string `json:"nzo_ids"`
+		Held   []string `json:"held"`
+		Error  string   `json:"error"`
 	}
 	if err := decodeJSON(api.client, req, &response); err != nil {
-		return "", fmt.Errorf("queue NZB in SABnzbd: %w", err)
+		return "", fmt.Errorf("queue NZB in %s: %w", api.productName(), err)
 	}
 	if !response.Status || len(response.NZOIDs) != 1 || strings.TrimSpace(response.NZOIDs[0]) == "" {
-		return "", fmt.Errorf("SABnzbd did not accept exactly one queued NZB")
+		if reason := strings.TrimSpace(response.Error); reason != "" {
+			return "", fmt.Errorf("%s did not accept exactly one queued NZB: %s", api.productName(), reason)
+		}
+		return "", fmt.Errorf("%s did not accept exactly one queued NZB", api.productName())
+	}
+	if len(response.Held) > 0 {
+		// nzbfast answers an accepted submission it takes for a duplicate
+		// with the job parked rather than queued. A parked job never runs, so
+		// waiting on it would time a hold instead of a download.
+		return "", fmt.Errorf("%s parked the queued NZB as a held duplicate instead of running it", api.productName())
 	}
 	return response.NZOIDs[0], nil
 }
@@ -306,7 +346,7 @@ func (api *sabAPI) waitComplete(ctx context.Context, nzoID string, interval time
 			case strings.Contains(status, "complete") || strings.Contains(status, "success"):
 				return true, nil
 			case strings.Contains(status, "fail"), strings.Contains(status, "delete"), strings.Contains(status, "abort"):
-				return false, fmt.Errorf("SABnzbd history status %q", fieldString(slot, "status"))
+				return false, fmt.Errorf("%s history status %q", api.productName(), fieldString(slot, "status"))
 			}
 		}
 		return false, nil
@@ -322,7 +362,7 @@ func (api *sabAPI) observe(ctx context.Context, jobIDs []string) (map[string]job
 		} `json:"queue"`
 	}
 	if err := api.get(ctx, "queue", nil, &queueResponse); err != nil {
-		return nil, fmt.Errorf("observe SABnzbd queue: %w", err)
+		return nil, fmt.Errorf("observe %s queue: %w", api.productName(), err)
 	}
 	for _, slot := range queueResponse.Queue.Slots {
 		id := fieldString(slot, "nzo_id")
@@ -346,7 +386,7 @@ func (api *sabAPI) observe(ctx context.Context, jobIDs []string) (map[string]job
 	// than the start of the queue request before it.
 	historyRequestedAt := time.Now()
 	if err := api.get(ctx, "history", url.Values{"limit": {strconv.Itoa(historyLimit)}}, &historyResponse); err != nil {
-		return nil, fmt.Errorf("observe SABnzbd history: %w", err)
+		return nil, fmt.Errorf("observe %s history: %w", api.productName(), err)
 	}
 	for _, slot := range historyResponse.History.Slots {
 		id := fieldString(slot, "nzo_id")
