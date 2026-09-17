@@ -61,6 +61,17 @@
         "CLIENT_RARPAR_VERSION": "REPLACE_WITH_RARPAR_RELEASE_VERSION",
         "CLIENT_RARPAR_SHA256": "REPLACE_WITH_RARPAR_RELEASE_SHA256"
       }
+    },
+    {
+      "client": "nzbfast",
+      "archive_toolchain": "vanilla",
+      "target": "docker-linux",
+      "command": ["/scratch/nntp-bench-bin/clientadapter"],
+      "environment": {
+        "CLIENT_IMAGE": "nzbfast/nzbfast@sha256:547451d63f917f342441c65a7db323db7cb2e9e0d39ca0bdc698067b528a0aa8",
+        "CLIENT_NETWORK": "nntp-bench_benchmark",
+        "CLIENT_PLATFORM": "linux/amd64"
+      }
     }
   ]
 }

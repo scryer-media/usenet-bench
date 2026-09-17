@@ -214,8 +214,13 @@ func (c Config) Validate() error {
 	if err := validateIdentityPaths(c.IdentityPaths); err != nil {
 		return err
 	}
-	if c.Client != benchmark.Weaver && c.Client != benchmark.SABnzbd && c.Client != benchmark.NZBGet {
+	if !benchmark.KnownClient(c.Client) {
 		return fmt.Errorf("unsupported client %q", c.Client)
+	}
+	// nzbfast is benchmarked from the published image only, so the suite never
+	// installs it on the machine it is measuring. The Docker lane runs it.
+	if c.Client == benchmark.NZBFast {
+		return fmt.Errorf("%s is a container-only client in this suite; run it on the %s target", c.Client, benchmark.DockerLinux)
 	}
 	if c.ArchiveToolchain != benchmark.VanillaArchiveToolchain {
 		return fmt.Errorf("native adapter only supports the vanilla archive toolchain, got %q", c.ArchiveToolchain)

@@ -1,5 +1,6 @@
 // clientadapter is the shared, digest-pinned Docker adapter for Weaver,
-// SABnzbd, and NZBGet. The product selection comes solely from BENCH_CLIENT.
+// SABnzbd, NZBGet and nzbfast. The product selection comes solely from
+// BENCH_CLIENT.
 package main
 
 import (

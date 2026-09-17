@@ -16,7 +16,17 @@ const (
 	Weaver  Client = "weaver"
 	SABnzbd Client = "sabnzbd"
 	NZBGet  Client = "nzbget"
+	NZBFast Client = "nzbfast"
 )
+
+// KnownClient reports whether the harness has an adapter for the client.
+func KnownClient(client Client) bool {
+	switch client {
+	case Weaver, SABnzbd, NZBGet, NZBFast:
+		return true
+	}
+	return false
+}
 
 const PrimaryMetric = "submission_to_terminal_verified_output"
 
@@ -432,7 +442,7 @@ func validateOptions(options PlanOptions) error {
 		return err
 	}
 	for _, client := range options.Clients {
-		if client != Weaver && client != SABnzbd && client != NZBGet {
+		if !KnownClient(client) {
 			return fmt.Errorf("unsupported benchmark client %q", client)
 		}
 	}
