@@ -362,9 +362,14 @@ output of every lane is the media payload, and a client that cannot reach it
 is a DNF that the summarizer counts, with the format named. That is a real
 result: in the pinned images NZBGet exposes only `UnrarCmd` and `SevenZipCmd`,
 so it has no configured reader for a `.tar.gz`, a bare `.xz` or a zip, and the
-tar, xz and zip lanes are expected to DNF for it. `--exclude-client` is not
-used for them, because the point of a breadth lane is to record what a client
-does with a shape it was not built for.
+tar, xz and zip lanes are expected to DNF for it. nzbfast reads RAR, 7z and
+zip but not gzip or xz, so the `.tar.gz`, `.tar.xz` and bare `.xz` lanes DNF
+for it too, as does the RAR that holds a `.tar.xz`: it unpacks the RAR and
+stops at the compressed tar inside. It decodes yEnc only, so the uuencoded
+lane DNFs on every article, and it unpacks the spanned zip but leaves a `.z01`
+volume behind, which output verification does not admit. `--exclude-client` is
+not used for any of them, because the point of a breadth lane is to record what
+a client does with a shape it was not built for.
 
 ### Compression lanes
 
