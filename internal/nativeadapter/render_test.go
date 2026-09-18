@@ -214,8 +214,10 @@ func TestNativeSequentialQueueResultHasCompleteHonestTiming(t *testing.T) {
 	lowerBound := accepted.Add(1900 * time.Millisecond)
 	observed := lowerBound.Add(10 * time.Millisecond)
 	metrics := benchmark.ResourceMetrics{
-		CPUTimeNanoseconds:  benchmark.MeasuredMeasurement("client_process", "go-os-process-state", "darwin", 123),
-		InstructionsRetired: benchmark.UnavailableMeasurement("client_process", "native-instructions", "darwin", "not available"),
+		CPUTimeNanoseconds:   benchmark.MeasuredMeasurement("client_process", "go-os-process-state", "darwin", 123),
+		InstructionsRetired:  benchmark.UnavailableMeasurement("client_process", "native-instructions", "darwin", "not available"),
+		PeakRSSBytes:         benchmark.MeasuredMeasurement("client_process_tree", "ps-process-tree-sampled", "darwin@250ms", 65536),
+		PeakRSSHighWaterHint: benchmark.MeasuredMeasurement("client_process", "getrusage-ru_maxrss", "darwin", 65536),
 	}
 	result := benchmark.QueueAdapterResult{
 		SchemaVersion:            5,

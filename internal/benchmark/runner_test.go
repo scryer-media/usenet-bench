@@ -55,8 +55,10 @@ func TestAdapterResultMustMatchTLSPlanMetadata(t *testing.T) {
 		ClientVersion:            "test",
 		RenderedConfigSHA256:     "0123456789012345678901234567890123456789012345678901234567890123",
 		ResourceMetrics: ResourceMetrics{
-			CPUTimeNanoseconds:  UnavailableMeasurement("client_container", "test", "1", "not collected in unit test"),
-			InstructionsRetired: UnavailableMeasurement("client_process", "test", "1", "not collected in unit test"),
+			CPUTimeNanoseconds:   UnavailableMeasurement("client_container", "test", "1", "not collected in unit test"),
+			InstructionsRetired:  UnavailableMeasurement("client_process", "test", "1", "not collected in unit test"),
+			PeakRSSBytes:         UnavailableMeasurement("client_container", "test", "1", "not collected in unit test"),
+			PeakRSSHighWaterHint: UnavailableMeasurement("client_container", "test", "1", "not collected in unit test"),
 		},
 	}
 	if err := result.ValidateFor(run); err == nil {
@@ -100,8 +102,10 @@ func TestAdapterResultRequiresExplicitResourceCounterOutcomes(t *testing.T) {
 		t.Fatal("missing resource measurements should not validate")
 	}
 	result.ResourceMetrics = ResourceMetrics{
-		CPUTimeNanoseconds:  MeasuredMeasurement("client_container", "test", "1", 100),
-		InstructionsRetired: UnavailableMeasurement("client_process", "test", "1", "hardware counter not exposed"),
+		CPUTimeNanoseconds:   MeasuredMeasurement("client_container", "test", "1", 100),
+		InstructionsRetired:  UnavailableMeasurement("client_process", "test", "1", "hardware counter not exposed"),
+		PeakRSSBytes:         MeasuredMeasurement("client_container", "test", "1", 8192),
+		PeakRSSHighWaterHint: UnavailableMeasurement("client_container", "test", "1", "high-water mark not exposed"),
 	}
 	if err := result.ValidateFor(run); err != nil {
 		t.Fatalf("explicit unavailable instructions counter should validate: %v", err)

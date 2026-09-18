@@ -36,9 +36,11 @@ func runQueue(ctx context.Context, cfg Config) error {
 	defer container.cleanup()
 
 	cpu := cpuSampler{docker: container.docker, name: container.name, reason: "suite-level telemetry is not reported for this submission mode"}
+	memory := unavailableMemorySampler("suite-level telemetry is not reported for this submission mode")
 	instructions := unavailableInstructionRecorder("suite-level retired instructions are not reported for this submission mode")
 	if input.SubmissionMode == benchmark.SubmissionModeQueued || input.SubmissionMode == benchmark.SubmissionModeQueueDrain {
 		cpu = startCPUSampler(ctx, container.docker, container.name)
+		memory = startMemorySampler(ctx, container.docker, container.name)
 	}
 	if input.SubmissionMode == benchmark.SubmissionModeQueued {
 		instructions = startInstructionRecorder(ctx, cfg, container)
@@ -47,6 +49,7 @@ func runQueue(ctx context.Context, cfg Config) error {
 	defer func() {
 		if !metricsCollected {
 			_ = instructions.finish()
+			_, _ = memory.finish()
 		}
 	}()
 
@@ -87,6 +90,7 @@ func runQueue(ctx context.Context, cfg Config) error {
 
 	telemetryCtx, cancelTelemetry := context.WithTimeout(context.Background(), 15*time.Second)
 	cpuMeasurement := cpu.finish(telemetryCtx)
+	peakRSSMeasurement, peakRSSHint := memory.finish()
 	cancelTelemetry()
 	instructionMeasurement := instructions.finish()
 	if raw := strings.TrimSpace(instructions.output.String()); raw != "" {
@@ -118,8 +122,10 @@ func runQueue(ctx context.Context, cfg Config) error {
 		ClientVersion:            clientVersion,
 		RenderedConfigSHA256:     spec.ConfigSHA256,
 		ResourceMetrics: benchmark.ResourceMetrics{
-			CPUTimeNanoseconds:  cpuMeasurement,
-			InstructionsRetired: instructionMeasurement,
+			CPUTimeNanoseconds:   cpuMeasurement,
+			InstructionsRetired:  instructionMeasurement,
+			PeakRSSBytes:         peakRSSMeasurement,
+			PeakRSSHighWaterHint: peakRSSHint,
 		},
 	}
 	if err := result.ResourceMetrics.Validate(); err != nil {
@@ -172,6 +178,10 @@ func runSequentialSubmission(ctx context.Context, api productAPI, interval time.
 	jobs := make([]benchmark.QueueJobResult, 0, len(inputJobs))
 	for jobIndex, inputJob := range inputJobs {
 		instructions := startInstructionRecorder(ctx, cfg, container)
+		// A peak cannot be differenced the way a counter can, so each fixture
+		// gets its own sampling window rather than a reading taken across the
+		// whole drain.
+		memory := startMemorySampler(ctx, container.docker, container.name)
 		cpuStart, cpuStartErr := cpu.read(ctx)
 		monitorCtx, cancelMonitor := context.WithCancel(ctx)
 		registrations := make(chan queuedJob, 1)
@@ -188,6 +198,7 @@ func runSequentialSubmission(ctx context.Context, api productAPI, interval time.
 		if err != nil {
 			cancelMonitor()
 			_ = instructions.finish()
+			_, _ = memory.finish()
 			return nil, fmt.Errorf("queue %s: %w", inputJob.RunID, err)
 		}
 		acceptedAt := time.Now()
@@ -210,6 +221,12 @@ func runSequentialSubmission(ctx context.Context, api productAPI, interval time.
 			cancelTelemetry()
 		}
 		instructionMeasurement := instructions.finish()
+		peakRSSMeasurement, _ := memory.finish()
+		// The kernel's own high-water mark accumulates over the container,
+		// which outlives any one fixture here, so it cannot be attributed to
+		// this one. Only the sampled window figure is reportable per fixture.
+		peakRSSHint := benchmark.UnavailableMeasurement(memoryHintScope, "cgroup-memory-peak", "unknown",
+			"the container's cumulative memory high-water mark cannot be attributed to a single fixture in a sequential drain")
 		if raw := strings.TrimSpace(instructions.output.String()); raw != "" {
 			if err := writeNewFile(filepath.Join(cfg.ConfigDir, fmt.Sprintf("perf-job-%03d.txt", jobIndex+1)), []byte(raw+"\n")); err != nil {
 				return nil, err
@@ -217,6 +234,7 @@ func runSequentialSubmission(ctx context.Context, api productAPI, interval time.
 		}
 		cpuMeasurement.Window = "pre_submission_to_post_terminal"
 		instructionMeasurement.Window = "recorder_enabled_to_post_terminal"
+		peakRSSMeasurement.Window = "pre_submission_to_post_terminal"
 		if monitored.err != nil {
 			return nil, fmt.Errorf("monitor fixture %s lifecycle: %w", inputJob.RunID, monitored.err)
 		}
@@ -224,8 +242,10 @@ func runSequentialSubmission(ctx context.Context, api productAPI, interval time.
 			return nil, fmt.Errorf("monitor fixture %s returned %d jobs", inputJob.RunID, len(monitored.jobs))
 		}
 		metrics := benchmark.ResourceMetrics{
-			CPUTimeNanoseconds:  cpuMeasurement,
-			InstructionsRetired: instructionMeasurement,
+			CPUTimeNanoseconds:   cpuMeasurement,
+			InstructionsRetired:  instructionMeasurement,
+			PeakRSSBytes:         peakRSSMeasurement,
+			PeakRSSHighWaterHint: peakRSSHint,
 		}
 		if err := metrics.Validate(); err != nil {
 			return nil, fmt.Errorf("validate fixture %s resource metrics: %w", inputJob.RunID, err)

@@ -303,6 +303,66 @@ func TestBuildSummaryReportPairsContainerCPUTime(t *testing.T) {
 	}
 }
 
+func TestBuildSummaryReportPairsPeakRSS(t *testing.T) {
+	artifacts := make([]benchmark.QueueArtifact, 0, 40)
+	for repetition := 1; repetition <= 20; repetition++ {
+		artifacts = append(artifacts,
+			summaryTestArtifactWithPeakRSS(benchmark.Weaver, repetition, int64(100+repetition), "client_container", 256<<20),
+			summaryTestArtifactWithPeakRSS(benchmark.SABnzbd, repetition, int64(80+repetition), "client_container", 1024<<20),
+		)
+	}
+	report, err := buildSummaryReport(artifacts, nil, benchmark.Weaver, benchmark.SABnzbd, 20, 17, 1_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rss := report.Comparisons[0].PeakRSS
+	if rss.Metric != "peak_rss_bytes" || rss.ComparisonWithheld != "" || rss.Summary == nil {
+		t.Fatalf("peak RSS comparison not summarized: %#v", rss)
+	}
+	if rss.PairedBlocks != 20 || rss.Summary.Count != 20 {
+		t.Fatalf("peak RSS paired %d/%d blocks, want 20", rss.PairedBlocks, rss.Summary.Count)
+	}
+	// Candidate over baseline, like every other ratio in the report: SABnzbd's
+	// gigabyte over weaver's 256 MiB.
+	if ratio := rss.Summary.GeometricMeanRatio; ratio < 3.99 || ratio > 4.01 {
+		t.Fatalf("peak RSS geometric mean ratio %v, want 4", ratio)
+	}
+	for _, accounting := range rss.Accounting {
+		if accounting.Scope != "client_container" || accounting.MeasuredBlocks != 20 || accounting.UnavailableBlocks != 0 {
+			t.Fatalf("accounting for %s: %#v", accounting.Client, accounting)
+		}
+	}
+	// The CPU comparison must be unaffected by a run that carries only memory:
+	// each counter is withheld on its own evidence.
+	if cpu := report.Comparisons[0].CPUTime; cpu.Summary != nil {
+		t.Fatalf("CPU comparison summarized without measured CPU: %#v", cpu)
+	}
+}
+
+// A sampled tree figure and a platform high-water hint are different
+// quantities, so two clients measured by different collectors must not be
+// compared even when both report a number.
+func TestBuildSummaryReportWithholdsPeakRSSAcrossScopes(t *testing.T) {
+	artifacts := make([]benchmark.QueueArtifact, 0, 40)
+	for repetition := 1; repetition <= 20; repetition++ {
+		artifacts = append(artifacts,
+			summaryTestArtifactWithPeakRSS(benchmark.Weaver, repetition, int64(100+repetition), "client_process_tree", 256<<20),
+			summaryTestArtifactWithPeakRSS(benchmark.SABnzbd, repetition, int64(80+repetition), "client_container", 1024<<20),
+		)
+	}
+	report, err := buildSummaryReport(artifacts, nil, benchmark.Weaver, benchmark.SABnzbd, 20, 17, 1_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Comparisons[0].Summary == nil {
+		t.Fatal("timing summary must not depend on the peak RSS comparison")
+	}
+	rss := report.Comparisons[0].PeakRSS
+	if rss.Summary != nil || !strings.Contains(rss.ComparisonWithheld, "scopes differ") {
+		t.Fatalf("peak RSS across scopes was not withheld: %#v", rss)
+	}
+}
+
 func TestBuildSummaryReportWithholdsCPUTimeAcrossScopes(t *testing.T) {
 	artifacts := make([]benchmark.QueueArtifact, 0, 40)
 	for repetition := 1; repetition <= 20; repetition++ {
@@ -485,7 +545,12 @@ func summaryTestFixtureArtifact(fixtureID string, class fixture.FixtureClass, cl
 }
 
 func summaryUnavailableResources() *benchmark.ResourceMetrics {
-	return &benchmark.ResourceMetrics{CPUTimeNanoseconds: benchmark.UnavailableMeasurement("client_container", "cgroup-cpu", "test", "unavailable in test"), InstructionsRetired: benchmark.UnavailableMeasurement("client_container", "perf", "test", "unavailable in test")}
+	return &benchmark.ResourceMetrics{
+		CPUTimeNanoseconds:   benchmark.UnavailableMeasurement("client_container", "cgroup-cpu", "test", "unavailable in test"),
+		InstructionsRetired:  benchmark.UnavailableMeasurement("client_container", "perf", "test", "unavailable in test"),
+		PeakRSSBytes:         benchmark.UnavailableMeasurement("client_container", "cgroup-memory", "test", "unavailable in test"),
+		PeakRSSHighWaterHint: benchmark.UnavailableMeasurement("client_container", "cgroup-memory-peak", "test", "unavailable in test"),
+	}
 }
 
 func summaryWorkload(id string, class fixture.FixtureClass) *benchmark.WorkloadEvidence {
@@ -617,11 +682,29 @@ func summaryTestDidNotFinishArtifactFor(artifact benchmark.QueueArtifact) benchm
 func summaryTestArtifactWithCPU(client benchmark.Client, repetition int, measurement int64, scope string, cpuNanoseconds uint64) benchmark.QueueArtifact {
 	artifact := summaryTestArtifact(client, repetition, measurement)
 	metrics := &benchmark.ResourceMetrics{
-		CPUTimeNanoseconds:  benchmark.MeasuredMeasurement(scope, "cgroup-v2-cpu.stat", "test", cpuNanoseconds),
-		InstructionsRetired: benchmark.UnavailableMeasurement(scope, "none", "test", "not collected in tests"),
+		CPUTimeNanoseconds:   benchmark.MeasuredMeasurement(scope, "cgroup-v2-cpu.stat", "test", cpuNanoseconds),
+		InstructionsRetired:  benchmark.UnavailableMeasurement(scope, "none", "test", "not collected in tests"),
+		PeakRSSBytes:         benchmark.UnavailableMeasurement(scope, "none", "test", "not collected in tests"),
+		PeakRSSHighWaterHint: benchmark.UnavailableMeasurement(scope, "none", "test", "not collected in tests"),
 	}
 	// The artifact carries the adapter result twice (top level and inside
 	// the job) and the summarizer requires both copies to agree.
+	artifact.AdapterResult.Jobs[0].ResourceMetrics = metrics
+	artifact.Jobs[0].AdapterResult.ResourceMetrics = metrics
+	return artifact
+}
+
+// summaryTestArtifactWithPeakRSS is summaryTestArtifact with a measured
+// sampled peak-RSS counter at the given scope and nothing else collected, so
+// a test can show one counter summarizing while the other is withheld.
+func summaryTestArtifactWithPeakRSS(client benchmark.Client, repetition int, measurement int64, scope string, peakBytes uint64) benchmark.QueueArtifact {
+	artifact := summaryTestArtifact(client, repetition, measurement)
+	metrics := &benchmark.ResourceMetrics{
+		CPUTimeNanoseconds:   benchmark.UnavailableMeasurement(scope, "none", "test", "not collected in tests"),
+		InstructionsRetired:  benchmark.UnavailableMeasurement(scope, "none", "test", "not collected in tests"),
+		PeakRSSBytes:         benchmark.MeasuredMeasurement(scope, "cgroup-v2-memory.stat-anon-sampled", "test", peakBytes),
+		PeakRSSHighWaterHint: benchmark.UnavailableMeasurement(scope, "none", "test", "not collected in tests"),
+	}
 	artifact.AdapterResult.Jobs[0].ResourceMetrics = metrics
 	artifact.Jobs[0].AdapterResult.ResourceMetrics = metrics
 	return artifact

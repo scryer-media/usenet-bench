@@ -16,8 +16,10 @@ func nativeSequentialResult(terminalStatus, terminalError string) benchmark.Queu
 	lowerBound := accepted.Add(1900 * time.Millisecond)
 	observed := lowerBound.Add(10 * time.Millisecond)
 	metrics := benchmark.ResourceMetrics{
-		CPUTimeNanoseconds:  benchmark.MeasuredMeasurement("client_process_tree", "windows-job-cycle-time", "nominal-3600MHz", 123),
-		InstructionsRetired: benchmark.UnavailableMeasurement("client_process", "native-instructions", "windows", "not available"),
+		CPUTimeNanoseconds:   benchmark.MeasuredMeasurement("client_process_tree", "windows-job-cycle-time", "nominal-3600MHz", 123),
+		InstructionsRetired:  benchmark.UnavailableMeasurement("client_process", "native-instructions", "windows", "not available"),
+		PeakRSSBytes:         benchmark.MeasuredMeasurement("client_process_tree", "windows-job-working-set-sampled", "GetProcessMemoryInfo@250ms", 131072),
+		PeakRSSHighWaterHint: benchmark.MeasuredMeasurement("client_process_tree", "windows-job-peak-memory-used", "QueryInformationJobObject", 262144),
 	}
 	return benchmark.QueueAdapterResult{
 		SchemaVersion:            6,

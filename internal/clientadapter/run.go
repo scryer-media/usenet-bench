@@ -42,12 +42,15 @@ func Run(ctx context.Context, cfg Config) error {
 	// container is created. This deliberately includes client startup for every
 	// product; wall time remains the queue-acceptance-to-terminal boundary.
 	cpu := startCPUSampler(ctx, container.docker, container.name)
+	memory := startMemorySampler(ctx, container.docker, container.name)
 	instructions := startInstructionRecorder(ctx, cfg, container)
 	metricsCollected := false
 	defer func() {
 		if !metricsCollected {
-			// A failed queue or poll must not leave a host perf process behind.
+			// A failed queue or poll must not leave a host perf process or a
+			// sampling goroutine behind.
 			_ = instructions.finish()
+			_, _ = memory.finish()
 		}
 	}()
 
@@ -88,6 +91,7 @@ func Run(ctx context.Context, cfg Config) error {
 	telemetryCtx, cancelTelemetry := context.WithTimeout(context.Background(), 15*time.Second)
 	cpuMeasurement := cpu.finish(telemetryCtx)
 	cancelTelemetry()
+	peakRSSMeasurement, peakRSSHint := memory.finish()
 	instructionMeasurement := instructions.finish()
 	if raw := strings.TrimSpace(instructions.output.String()); raw != "" {
 		if err := writeNewFile(filepath.Join(cfg.ConfigDir, "perf-instructions.txt"), []byte(raw+"\n")); err != nil {
@@ -119,8 +123,10 @@ func Run(ctx context.Context, cfg Config) error {
 		ClientVersion:            clientVersion,
 		RenderedConfigSHA256:     spec.ConfigSHA256,
 		ResourceMetrics: benchmark.ResourceMetrics{
-			CPUTimeNanoseconds:  cpuMeasurement,
-			InstructionsRetired: instructionMeasurement,
+			CPUTimeNanoseconds:   cpuMeasurement,
+			InstructionsRetired:  instructionMeasurement,
+			PeakRSSBytes:         peakRSSMeasurement,
+			PeakRSSHighWaterHint: peakRSSHint,
 		},
 	}
 	if err := result.ValidateFor(benchmark.Run{

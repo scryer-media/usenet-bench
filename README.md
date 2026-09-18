@@ -1355,6 +1355,19 @@ when fewer than `--minimum-blocks` (and always at least two) blocks pair.
 The NFS profiles' CPU
 accounting caveat is carried under `caveats` too.
 
+Each stratum carries a `peak_rss` comparison on the same terms: the two
+clients' `peak_rss_bytes` paired over the same blocks, with medians, a
+geometric-mean ratio (candidate over baseline; below 1 means the candidate held
+less memory) and a bootstrap interval, its own `accounting` block, and the same
+scope, collector and minimum-block withholding rules. Like `cpu_time` it is
+secondary evidence and never fails the summary closed. The NFS caveat does not
+apply to it — that caveat is about kernel time the host spends outside the
+client's cgroup, which is not resident memory — so it is not repeated there.
+`peak_rss_high_water_hint` is recorded per run but not paired: it measures a
+different quantity on each platform (see
+[What is measured](#what-is-measured)), so a ratio across it would not mean
+anything.
+
 Each stratum also carries `transfer`: per client, over its finished shaped
 blocks, the minimum, median and maximum `shaper_downstream_bytes` and, when the
 shaper counted commands, the summed `article_census` (blocks covered, article
@@ -2145,6 +2158,37 @@ Per run the artifact records:
   reason — never as zero, never omitted. perf starts disabled, acknowledges
   enable/disable commands, and must report full running coverage; missing or
   multiplexed counts are unavailable. Per-job raw logs are retained.
+- `peak_rss_bytes` — the high point, over the measured window, of the resident
+  memory held by the client **and every process it starts**. The unpackers and
+  par2 helpers SABnzbd and NZBGet shell out to are separate processes, so a
+  figure scoped to the client alone would understate exactly the clients that
+  delegate the most work. It is sampled, not read from a kernel high-water
+  mark, because the same quantity has to be collectable on all three hosts:
+  Docker lane, the container cgroup's anonymous total every 100 ms (v2
+  `memory.stat` `anon`, v1 `memory.stat` `rss`, `client_container`); macOS lane,
+  a `ps` walk of the client's subtree summed every 250 ms
+  (`ps-process-tree-sampled`, `client_process_tree`); Windows lane, the working
+  set of every member of the client's job object, from the same job the CPU
+  counter uses (`client_process_tree`). Being sampled, it is a **lower bound** —
+  a peak between two samples is missed — and it is the counter to compare
+  across clients. Page cache is deliberately excluded: `memory.current` and
+  `memory.peak` count the file cache a download writes, which is the host's
+  memory, not the client's.
+- `peak_rss_high_water_hint` — the platform's own free high-water mark, beside
+  the sampled figure and never in place of it, because **it means a different
+  quantity on each host**: the largest single reaped process on macOS
+  (`ru_maxrss`, `client_process`), the sum of per-process peaks on Windows
+  (`PeakJobMemoryUsed`, `client_process_tree`), and the whole container
+  including page cache under cgroup (`memory.peak` /
+  `memory.max_usage_in_bytes`, `client_container`). It is worth recording
+  because it catches spikes the sampler slept through, and it is not
+  comparable between lanes. `summarize` does not pair it. In a sequential drain
+  it is recorded unavailable with a reason: a cumulative high-water mark cannot
+  be attributed to one fixture among many.
+
+  `summarize` pairs `peak_rss_bytes` per stratum as `peak RSS`, the same way it
+  pairs `cpu_time` — and withholds the comparison, rather than failing it
+  closed, when the two clients' collectors or scopes differ.
 
 - `storage_profile` — where the client's intermediate and completion
   directories lived, with the link's fixed rate, burst and round trip. It is a

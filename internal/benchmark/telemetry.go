@@ -92,17 +92,39 @@ func (m CounterMeasurement) validate(name string) error {
 	return m.CounterValue.validate(name)
 }
 
-// ResourceMetrics record CPU time and retired instructions for the actual
-// client workload, never the benchmark controller alone. Each counter carries
-// its own provenance so reviewers can interpret availability correctly.
+// ResourceMetrics record CPU time, retired instructions and resident memory
+// for the actual client workload, never the benchmark controller alone. Each
+// counter carries its own provenance so reviewers can interpret availability
+// correctly.
+//
+// The two memory counters answer different questions and are not
+// interchangeable. PeakRSSBytes is the high point of the *sum* of resident
+// memory over every process in the client's tree, sampled on a fixed
+// interval; it is the figure that is comparable between clients and between
+// hosts, because every platform computes it the same way. It is also a lower
+// bound: a spike shorter than the sampling interval is not seen.
+// PeakRSSHighWaterHint is whatever exact high-water mark the kernel keeps for
+// free, which is cheaper and catches every spike but means something
+// different on each platform -- the largest single process on macOS, the sum
+// of per-process peaks on Windows, the whole container including page cache
+// under cgroup. It is a hint for interpreting the sampled figure, never a
+// cross-platform number.
 type ResourceMetrics struct {
-	CPUTimeNanoseconds  CounterMeasurement `json:"cpu_time_nanoseconds"`
-	InstructionsRetired CounterMeasurement `json:"instructions_retired"`
+	CPUTimeNanoseconds   CounterMeasurement `json:"cpu_time_nanoseconds"`
+	InstructionsRetired  CounterMeasurement `json:"instructions_retired"`
+	PeakRSSBytes         CounterMeasurement `json:"peak_rss_bytes"`
+	PeakRSSHighWaterHint CounterMeasurement `json:"peak_rss_high_water_hint"`
 }
 
 func (m ResourceMetrics) Validate() error {
 	if err := m.CPUTimeNanoseconds.validate("cpu_time_nanoseconds"); err != nil {
 		return err
 	}
-	return m.InstructionsRetired.validate("instructions_retired")
+	if err := m.InstructionsRetired.validate("instructions_retired"); err != nil {
+		return err
+	}
+	if err := m.PeakRSSBytes.validate("peak_rss_bytes"); err != nil {
+		return err
+	}
+	return m.PeakRSSHighWaterHint.validate("peak_rss_high_water_hint")
 }

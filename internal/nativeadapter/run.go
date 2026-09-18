@@ -121,6 +121,7 @@ func runSingle(ctx context.Context, cfg Config) (nativeRun, error) {
 	if err != nil {
 		return nativeRun{}, err
 	}
+	peakRSSMeasurement, peakRSSHint := process.memoryMeasurement()
 	result := benchmark.AdapterResult{
 		SchemaVersion:            7,
 		RunID:                    cfg.RunID,
@@ -140,8 +141,10 @@ func runSingle(ctx context.Context, cfg Config) (nativeRun, error) {
 		ClientVersion:            cfg.ClientVersion,
 		RenderedConfigSHA256:     spec.ConfigSHA256,
 		ResourceMetrics: benchmark.ResourceMetrics{
-			CPUTimeNanoseconds:  process.cpuMeasurement(),
-			InstructionsRetired: nativeInstructionMeasurement(),
+			CPUTimeNanoseconds:   process.cpuMeasurement(),
+			InstructionsRetired:  nativeInstructionMeasurement(),
+			PeakRSSBytes:         peakRSSMeasurement,
+			PeakRSSHighWaterHint: peakRSSHint,
 		},
 	}
 	if err := result.ValidateFor(benchmark.Run{
@@ -302,6 +305,7 @@ type nativeProcess struct {
 	done    chan struct{}
 	err     error
 	cpu     cpuAccountant
+	memory  memoryAccountant
 }
 
 // cpuAccountant charges the client's CPU to the run. Which processes it can
@@ -325,6 +329,26 @@ func (account unavailableCPUAccount) measurement(*os.ProcessState) benchmark.Cou
 }
 
 func (unavailableCPUAccount) close() {}
+
+// memoryAccountant records the resident memory of the client and everything
+// it starts, as a peak rather than a total: memory is occupied, not spent, so
+// the interesting figure is the most the tree held at once. It returns the
+// sampled tree figure and, second, whatever exact high-water mark the
+// platform keeps for free -- a hint whose meaning differs per platform and
+// which is never a substitute for the sampled one.
+type memoryAccountant interface {
+	measurement(*os.ProcessState) (benchmark.CounterMeasurement, benchmark.CounterMeasurement)
+	close()
+}
+
+type unavailableMemoryAccount struct{ reason string }
+
+func (account unavailableMemoryAccount) measurement(*os.ProcessState) (benchmark.CounterMeasurement, benchmark.CounterMeasurement) {
+	return benchmark.UnavailableMeasurement("client_process_tree", "native-memory-accounting", runtime.GOOS, account.reason),
+		benchmark.UnavailableMeasurement("client_process", "native-memory-high-water", runtime.GOOS, account.reason)
+}
+
+func (unavailableMemoryAccount) close() {}
 
 // checkAPIPortFree refuses to launch a client onto a port something else is
 // already listening on. The product does not necessarily refuse: SABnzbd
@@ -372,9 +396,13 @@ func startProcess(ctx context.Context, cfg Config, spec productSpec) (*nativePro
 		process.cpu.close()
 		process.cpu = unavailableCPUAccount{reason: "native CPU accounting could not attach to the client: " + err.Error()}
 	}
+	// Memory sampling starts only once the tree's membership mechanism is in
+	// place, because on Windows that mechanism is what enumerates the tree.
+	process.memory = newMemoryAccountant(process.cpu, command.Process)
 	if err := resumeAccountedProcess(command.Process); err != nil {
 		_ = command.Process.Kill()
 		_ = command.Wait()
+		process.memory.close()
 		process.cpu.close()
 		_ = logFile.Close()
 		return nil, err
@@ -429,6 +457,9 @@ func (process *nativeProcess) ensureStopped() {
 		return
 	}
 	defer process.cpu.close()
+	if process.memory != nil {
+		defer process.memory.close()
+	}
 	if process.exited() {
 		return
 	}
@@ -443,6 +474,19 @@ func (process *nativeProcess) cpuMeasurement() benchmark.CounterMeasurement {
 		return benchmark.UnavailableMeasurement("client_process", "native-cpu-accounting", runtime.GOOS, "native client process did not exit before CPU accounting")
 	}
 	return process.cpu.measurement(process.command.ProcessState)
+}
+
+// memoryMeasurement returns the sampled process-tree peak and the platform's
+// high-water hint. Unlike CPU time, the sampled figure is collected while the
+// client runs, so it survives a client that never exited cleanly; only the
+// hint depends on the wait status.
+func (process *nativeProcess) memoryMeasurement() (benchmark.CounterMeasurement, benchmark.CounterMeasurement) {
+	if process == nil || process.memory == nil {
+		reason := "native memory accounting was not started"
+		return benchmark.UnavailableMeasurement("client_process_tree", "native-memory-accounting", runtime.GOOS, reason),
+			benchmark.UnavailableMeasurement("client_process", "native-memory-high-water", runtime.GOOS, reason)
+	}
+	return process.memory.measurement(process.command.ProcessState)
 }
 
 func nativeInstructionMeasurement() benchmark.CounterMeasurement {

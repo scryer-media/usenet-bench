@@ -231,8 +231,10 @@ func TestSequentialQueueResultLeavesOutputForNeutralVerification(t *testing.T) {
 	queuedAt := time.Now()
 	completedAt := queuedAt.Add(time.Second)
 	resourceMetrics := ResourceMetrics{
-		CPUTimeNanoseconds:  MeasuredMeasurement("client_container", "test", "1", 1),
-		InstructionsRetired: UnavailableMeasurement("client_container", "test", "1", "not collected"),
+		CPUTimeNanoseconds:   MeasuredMeasurement("client_container", "test", "1", 1),
+		InstructionsRetired:  UnavailableMeasurement("client_container", "test", "1", "not collected"),
+		PeakRSSBytes:         MeasuredMeasurement("client_container", "test", "1", 4096),
+		PeakRSSHighWaterHint: UnavailableMeasurement("client_container", "test", "1", "not collected"),
 	}
 	result := QueueAdapterResult{
 		SchemaVersion:            7,
