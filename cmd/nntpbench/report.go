@@ -53,9 +53,8 @@ order it ran.`
 // lane, in one sentence, because an absence a reader has to infer looks like
 // an absence somebody arranged.
 const reportNZBFastPlacement = `nzbfast is measured on the Linux container lane only, where container overhead
-is nil, because the vendor ships it container-first; measuring it on a native
-lane would compare a packaging the vendor does not ship against two the
-vendors do.`
+is nil; the container image is the packaging the vendor leads with, and this
+harness measures it in that form rather than on a native lane.`
 
 // reportKnownGaps is the standing list. A report that prints only the gaps a
 // particular run happened to hit would let a quiet run look stronger than a
