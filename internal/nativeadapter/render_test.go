@@ -218,6 +218,7 @@ func TestNativeSequentialQueueResultHasCompleteHonestTiming(t *testing.T) {
 		InstructionsRetired:  benchmark.UnavailableMeasurement("client_process", "native-instructions", "darwin", "not available"),
 		PeakRSSBytes:         benchmark.MeasuredMeasurement("client_process_tree", "ps-process-tree-sampled", "darwin@250ms", 65536),
 		PeakRSSHighWaterHint: benchmark.MeasuredMeasurement("client_process", "getrusage-ru_maxrss", "darwin", 65536),
+		DeviceWriteBytes:     nativeDeviceWriteMeasurement(),
 	}
 	result := benchmark.QueueAdapterResult{
 		SchemaVersion:            5,

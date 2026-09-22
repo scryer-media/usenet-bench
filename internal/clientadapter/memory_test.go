@@ -81,6 +81,7 @@ func TestUnstartedMemorySamplerReportsUnavailable(t *testing.T) {
 		InstructionsRetired:  hint,
 		PeakRSSBytes:         sampled,
 		PeakRSSHighWaterHint: hint,
+		DeviceWriteBytes:     benchmark.UnavailableMeasurement("client_container", "cgroup-io", "test", "not collected in unit test"),
 	}
 	if err := metrics.Validate(); err != nil {
 		t.Fatalf("an unavailable sampler produced metrics the schema rejects: %v", err)

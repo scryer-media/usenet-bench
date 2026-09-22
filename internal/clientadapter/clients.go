@@ -321,8 +321,14 @@ func (api *sabAPI) queue(ctx context.Context, nzbPath, archivePassword string, o
 	if len(response.Held) > 0 {
 		// nzbfast answers an accepted submission it takes for a duplicate
 		// with the job parked rather than queued. A parked job never runs, so
-		// waiting on it would time a hold instead of a download.
-		return "", fmt.Errorf("%s parked the queued NZB as a held duplicate instead of running it", api.productName())
+		// waiting on it would time a hold instead of a download. It is the
+		// client refusing to run this workload, which is a result about the
+		// client -- so it is raised as a refusal the controller records as a
+		// did-not-finish, not as a harness failure that discards the phase.
+		return "", &SubmissionRefusedError{
+			Client: api.productName(),
+			Reason: fmt.Sprintf("%s parked the queued NZB as a held duplicate instead of running it", api.productName()),
+		}
 	}
 	return response.NZOIDs[0], nil
 }
@@ -905,4 +911,25 @@ func numericID(raw json.RawMessage) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("expected positive numeric id")
+}
+
+// SubmissionRefusedError is a client declining to run a submission it
+// accepted the bytes of. It is a client outcome, not a harness fault: the
+// adapter started, the client answered, and what it answered was no. The
+// controller records it as a did-not-finish with the client's own reason, the
+// way it records a client that failed a job or never reached a terminal
+// state, rather than failing the whole phase and discarding the other
+// clients' measurements alongside it.
+//
+// The case this exists for is nzbfast's duplicate hold: it parks an NZB whose
+// content it has seen before, which the interleaved and repeated lanes submit
+// by design. Treating that as a harness failure threw away every other client
+// in the phase over one client's policy.
+type SubmissionRefusedError struct {
+	Client string
+	Reason string
+}
+
+func (e *SubmissionRefusedError) Error() string {
+	return e.Reason
 }

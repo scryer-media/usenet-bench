@@ -235,6 +235,7 @@ func TestSequentialQueueResultLeavesOutputForNeutralVerification(t *testing.T) {
 		InstructionsRetired:  UnavailableMeasurement("client_container", "test", "1", "not collected"),
 		PeakRSSBytes:         MeasuredMeasurement("client_container", "test", "1", 4096),
 		PeakRSSHighWaterHint: UnavailableMeasurement("client_container", "test", "1", "not collected"),
+		DeviceWriteBytes:     UnavailableMeasurement("client_container", "test", "1", "not collected"),
 	}
 	result := QueueAdapterResult{
 		SchemaVersion:            7,

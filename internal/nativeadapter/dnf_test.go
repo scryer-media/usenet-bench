@@ -20,6 +20,7 @@ func nativeSequentialResult(terminalStatus, terminalError string) benchmark.Queu
 		InstructionsRetired:  benchmark.UnavailableMeasurement("client_process", "native-instructions", "windows", "not available"),
 		PeakRSSBytes:         benchmark.MeasuredMeasurement("client_process_tree", "windows-job-working-set-sampled", "GetProcessMemoryInfo@250ms", 131072),
 		PeakRSSHighWaterHint: benchmark.MeasuredMeasurement("client_process_tree", "windows-job-peak-memory-used", "QueryInformationJobObject", 262144),
+		DeviceWriteBytes:     nativeDeviceWriteMeasurement(),
 	}
 	return benchmark.QueueAdapterResult{
 		SchemaVersion:            6,
