@@ -74,6 +74,11 @@ const (
 	RarparArchiveToolchain  ArchiveToolchain = "rarpar"
 )
 
+// DefaultInterleavedPasses is the real-provider leg's default: forward,
+// reversed, forward. Two passes are a pair with no middle, and the third is
+// what makes a median an observation rather than the mean of two.
+const DefaultInterleavedPasses = 3
+
 type PlanOptions struct {
 	FixtureIDs        []string
 	Clients           []Client

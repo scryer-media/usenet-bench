@@ -386,9 +386,12 @@ type summaryExecutionContext struct {
 	Command string
 	// Manifest is the immutable manifest itself, kept so a report can state
 	// the conditions the run was taken under rather than re-derive them.
-	Manifest    executionManifest
-	PlannedRuns map[string]benchmark.Run
-	Exclusions  []benchmark.ClientExclusion
+	Manifest executionManifest
+	// InterleavedPasses is the snapshotted plan's pass count, zero for the
+	// randomized schedule every shaped lane uses.
+	InterleavedPasses int
+	PlannedRuns       map[string]benchmark.Run
+	Exclusions        []benchmark.ClientExclusion
 }
 
 func summarize(args []string) error {
@@ -398,7 +401,7 @@ func summarize(args []string) error {
 	var minimumBlocks, resamples int
 	var seed int64
 	flags.StringVar(&artifactRoot, "artifacts", "", "benchmark artifact root containing sequential queue.json files")
-	flags.StringVar(&mode, "mode", "sequential", "sequential (paired per-fixture comparison) or queue-drain (per-lane drain wall clock of a queue-transition root; --baseline and --candidate are not used)")
+	flags.StringVar(&mode, "mode", "sequential", "sequential (paired per-fixture comparison), queue-drain (per-lane drain wall clock of a queue-transition root) or interleaved (per-client median over the real-provider leg's forward/reverse passes); --baseline and --candidate are used by sequential only")
 	flags.StringVar(&baselineName, "baseline", "", "baseline client: weaver, sabnzbd, or nzbget")
 	flags.StringVar(&candidateName, "candidate", "", "candidate client: weaver, sabnzbd, or nzbget")
 	flags.IntVar(&minimumBlocks, "minimum-blocks", 20, "minimum complete paired randomized blocks per stratum")
@@ -417,8 +420,28 @@ func summarize(args []string) error {
 		}
 		return printJSON(report)
 	}
+	if mode == "interleaved" {
+		if artifactRoot == "" {
+			return fmt.Errorf("--artifacts is required")
+		}
+		artifacts, _, err := loadSequentialArtifacts(artifactRoot)
+		if err != nil {
+			return err
+		}
+		execution, err := loadSummaryExecutionContext(artifactRoot, "sequential")
+		if err != nil {
+			return err
+		}
+		report, err := buildInterleavedReport(artifacts, execution.InterleavedPasses)
+		if err != nil {
+			return err
+		}
+		provenance := buildReportProvenance(provenanceInputs{Artifacts: artifacts, Manifest: execution.Manifest})
+		report.Provenance = &provenance
+		return printJSON(report)
+	}
 	if mode != "sequential" {
-		return fmt.Errorf("--mode must be sequential or queue-drain, got %q", mode)
+		return fmt.Errorf("--mode must be sequential, queue-drain or interleaved, got %q", mode)
 	}
 	if artifactRoot == "" || baselineName == "" || candidateName == "" {
 		return fmt.Errorf("--artifacts, --baseline, and --candidate are required")
@@ -640,7 +663,7 @@ func loadSummaryExecutionContext(root, command string) (summaryExecutionContext,
 	if len(plannedRuns) == 0 {
 		return summaryExecutionContext{}, fmt.Errorf("snapshotted plan has no runs for execution target %q", target)
 	}
-	return summaryExecutionContext{Command: manifest.Command, Manifest: manifest, PlannedRuns: plannedRuns, Exclusions: planned.ClientExclusions}, nil
+	return summaryExecutionContext{Command: manifest.Command, Manifest: manifest, InterleavedPasses: planned.InterleavedPasses, PlannedRuns: plannedRuns, Exclusions: planned.ClientExclusions}, nil
 }
 
 func buildSummaryReport(artifacts []benchmark.QueueArtifact, exclusions []benchmark.ClientExclusion, baseline, candidate benchmark.Client, minimumBlocks int, seed int64, resamples int) (summaryReport, error) {
