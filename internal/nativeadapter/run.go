@@ -243,6 +243,7 @@ func runSequentialQueue(ctx context.Context, cfg Config) error {
 		ClientIdentity:           clientIdentity,
 		ClientVersion:            clientVersion,
 		RenderedConfigSHA256:     renderedConfigSHA256,
+		Connections:              cfg.Connections,
 		ResourceMetrics:          suiteMetrics,
 	}
 	if err := validateNativeSequentialQueueResult(result); err != nil {

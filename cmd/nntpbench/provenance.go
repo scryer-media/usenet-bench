@@ -13,11 +13,16 @@ import (
 	"time"
 
 	"github.com/scryer-media/usenet-bench/internal/benchmark"
+	"github.com/scryer-media/usenet-bench/internal/buildinfo"
 )
 
 type executionManifest struct {
-	SchemaVersion    int             `json:"schema_version"`
-	StartedAt        time.Time       `json:"started_at"`
+	SchemaVersion int       `json:"schema_version"`
+	StartedAt     time.Time `json:"started_at"`
+	// HarnessCommit is the revision of this harness, from the linker stamp or
+	// the Go tool's VCS stamp, or "unknown" when the binary carries neither.
+	// A published number is only auditable against the code that produced it.
+	HarnessCommit    string          `json:"harness_commit"`
 	Command          string          `json:"command"`
 	Arguments        []string        `json:"arguments"`
 	ExecutionTarget  string          `json:"execution_target"`
@@ -118,9 +123,11 @@ func writeExecutionManifest(artifactRoot, command, planPath, adapterPath, target
 	if err := writeBytesExclusive(adapterSnapshot, adapterContents); err != nil {
 		return fmt.Errorf("snapshot adapter catalog: %w", err)
 	}
+	harnessCommit, _ := buildinfo.HarnessCommit()
 	manifest := executionManifest{
 		SchemaVersion:    1,
 		StartedAt:        time.Now().UTC(),
+		HarnessCommit:    harnessCommit,
 		Command:          command,
 		Arguments:        redactExecutionArguments(arguments),
 		ExecutionTarget:  target,

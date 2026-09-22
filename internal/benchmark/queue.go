@@ -112,7 +112,11 @@ type QueueAdapterResult struct {
 	ClientIdentity           string            `json:"client_identity"`
 	ClientVersion            string            `json:"client_version"`
 	RenderedConfigSHA256     string            `json:"rendered_config_sha256"`
-	ResourceMetrics          ResourceMetrics   `json:"resource_metrics"`
+	// Connections is the server connection count this client was given. Every
+	// client in a lane gets the same one; recording it per client is what
+	// lets a report state that rather than assert it.
+	Connections     int             `json:"connections,omitempty"`
+	ResourceMetrics ResourceMetrics `json:"resource_metrics"`
 	// ContainerRuntime is the Docker lane's readback of what the client
 	// container actually ran with. Native lanes have no container and omit it.
 	ContainerRuntime *ContainerRuntime `json:"container_runtime,omitempty"`

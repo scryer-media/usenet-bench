@@ -136,6 +136,7 @@ func runQueue(ctx context.Context, cfg Config) error {
 		ClientIdentity:           cfg.Image,
 		ClientVersion:            clientVersion,
 		RenderedConfigSHA256:     spec.ConfigSHA256,
+		Connections:              cfg.Connections,
 		ResourceMetrics: benchmark.ResourceMetrics{
 			CPUTimeNanoseconds:   cpuMeasurement,
 			InstructionsRetired:  instructionMeasurement,
