@@ -50,6 +50,7 @@ list` for the executable catalog. Generated archives stay outside Git.
   - [5. Write a plan](#5-write-a-plan)
   - [6. Run the sequential suite](#6-run-the-sequential-suite)
   - [7. Summarize](#7-summarize)
+  - [8. Report](#8-report)
 - [Driving a whole session](#driving-a-whole-session)
 - [Pre-seeded NNTP corpus image](#pre-seeded-nntp-corpus-image)
 - [Raw stack: the server side without Docker](#raw-stack-the-server-side-without-docker)
@@ -1368,6 +1369,23 @@ different quantity on each platform (see
 [What is measured](#what-is-measured)), so a ratio across it would not mean
 anything.
 
+Each stratum also carries a `device_write_bytes` comparison, on exactly the
+terms of the other two: the bytes each client put on a block device over the
+same paired blocks, with medians, a geometric-mean ratio (candidate over
+baseline; below 1 means the candidate wrote less), a bootstrap interval and
+its own `accounting`. It is the cost a wall clock on a fast disk hides — a
+completion move that fell back to a copy, an unpack that staged a second full
+copy, a repair pass rewriting what it had just written — and on an operator's
+slower disk it is the difference. In the Docker lane it is the container
+cgroup's own block-io accounting (`io.stat` `wbytes` on cgroup v2, the
+`blkio` `Write` rows on v1), so a helper the client shells out to is charged
+to it exactly as its CPU is. Both native lanes record the counter
+`unavailable` with that reason rather than as zero: neither host exposes
+per-process-tree block-io accounting comparable with the cgroup counter. An
+NFS storage profile carries a caveat of its own here — the payload leaves the
+container as network traffic, which the block-io counter never sees — so such
+a lane's figure is not comparable with a local-storage lane's.
+
 Each stratum also carries `transfer`: per client, over its finished shaped
 blocks, the minimum, median and maximum `shaper_downstream_bytes` and, when the
 shaper counted commands, the summed `article_census` (blocks covered, article
@@ -1377,6 +1395,86 @@ fast by pulling more than the NZB carries visible next to its wall clock. A
 deterministic client lands within a few bytes of itself from block to block;
 a spread is a finding, and the census says whether the excess was requested
 twice or read past.
+
+Every summary — paired, queue-drain and interleaved — carries a `provenance`
+block stating the conditions its numbers were taken under, built from the
+artifacts and the run's immutable execution manifest and never from the
+machine running `summarize`:
+
+- `harness_commit` — the revision of the harness that took the measurements,
+  from its linker stamp or the Go tool's VCS stamp. A binary carrying neither
+  records `unknown` and the block warns, rather than leaving the field empty.
+- `clients` — per client: the adapter lane, the build that ran (the pinned
+  `image@sha256:…` on a Docker lane, the launched binary's path on a native
+  one), the version the client reported over its own public API, the image
+  digest the daemon resolved, the archive toolchain identity, the connection
+  count it was given and how it validated TLS.
+- `corpus` — the fixture ids, a digest over their workload identities, and the
+  article profile.
+- `lane` — execution target, profile, transports, server link with its round
+  trip and egress, storage profile, and whether every client was given the
+  same connection count.
+- `host` — hostname, OS and architecture, CPU model, logical CPU count, RAM,
+  kernel and, on a Docker lane, the daemon and client versions.
+- `docker_parity` — Docker lane only: per container, the CPU and memory
+  ceilings, the pids limit, the working directory's mount type and path and
+  the network mode, all read back from `docker inspect` **after the container
+  started** rather than copied from the configuration the harness intended.
+  `cpu_and_memory_equal` says whether every client container was given the
+  same machine; when it is false, `findings` names the pair that differs and
+  the rendered report prints a `WARN`. The measurements are still published —
+  they exist and the reader is entitled to them — but a phase whose clients
+  were not given equal machines is not a comparison of the clients, and the
+  report has to say so where the numbers are.
+- `warnings` — anything the block could not establish, or established and does
+  not like.
+
+The real-provider leg has a summary of its own:
+
+```bash
+go run ./cmd/nntpbench summarize --mode interleaved --artifacts /scratch/runs/artifacts
+```
+
+It reads a root whose plan was built with `interleaved` (see
+[Real provider lane](#real-provider-lane)) and refuses one that was not: a
+randomized schedule read as an ABBA one would report a median over passes that
+were never passes. Per client and fixture it reports the median wall clock
+across the passes with the minimum and maximum beside it, and then every arm
+in the order it ran — pass number, local start time, wall clock, outcome, the
+payload the NZB carries, and the host's own received bytes over that arm. When
+the host received more than 5 % above the payload, the arm is flagged: other
+traffic shared the link and its wall clock is worth less than it looks. There
+is no ratio and no bootstrap interval. Three passes over an unattested link do
+not support one, and printing one would dress a reconnaissance number up as a
+headline result.
+
+### 8. Report
+
+```bash
+go run ./cmd/nntpbench report --summary /scratch/logs/summary-B3-vs-sabnzbd.json
+```
+
+`report` renders any summary this harness writes as text, conditions first. It
+adds no number, drops no result and reorders nothing except to put the
+provenance block above the figures: a benchmark of other people's products is
+read by people with a reason to doubt it, and the first question every one of
+them asks is what actually ran.
+
+Under the figures every report prints the same three fixed sections:
+
+- **Method** — the ethos, stated the same way every time: every client is the
+  vendor's shipped product with its shipped defaults, one run per client per
+  lane, the same connection count and the same server, driven only through the
+  public API its own users drive, with every effective setting rendered into
+  the run's artifact; wall clock from submission to the client's own terminal
+  state, counted only when the output was independently verified; and the
+  real-provider leg interleaved forward and reverse with medians.
+- **nzbfast's placement** — one sentence: it is measured on the Linux
+  container lane only, where container overhead is nil, because the vendor
+  ships it container-first.
+- **Known gaps** — the standing list of what the harness does not measure,
+  printed on every report rather than only on the runs that happened to hit
+  them, so a quiet run cannot look stronger than a noisy one.
 
 ## Driving a whole session
 
@@ -2146,6 +2244,29 @@ Per run the artifact records:
   kernel spends outside the client's cgroup; the caveat is recorded in every
   NFS attestation. `summarize` pairs this counter per stratum as `cpu_time`
   (see [7. Summarize](#7-summarize)).
+- `device_write_bytes` — Docker lane: the container cgroup's own block-io
+  write accounting, read host-side on the same bracketing pair as CPU time and
+  summed across devices (`io.stat` `wbytes` on cgroup v2; the `blkio`
+  `Write` rows of `blkio.throttle.io_service_bytes` or `blkio.io_service_bytes`
+  on v1). It counts bytes submitted to the device, so it excludes writes still
+  in the page cache when the run ended and includes writeback the kernel did
+  for this cgroup during it — a measurement of the run's device traffic rather
+  than of the client's `write()` calls. Native lanes record it `unavailable`
+  with a reason. `summarize` pairs it per stratum as `device_write_bytes`.
+- `container_runtime` — Docker lane: what the daemon says the container
+  actually ran with, read back with `docker inspect` after it started — CPU
+  quota and period or `--cpus`, the memory and pids ceilings, the network mode
+  and the working directory's mount type, source and destination. A readback
+  the daemon could not answer is recorded `unavailable` with its reason and
+  never as an unlimited container. It is what lets a report state the
+  containers were equal rather than assert it.
+- `connections` — the server connection count the client was given. Every
+  client in a lane gets the same one; recording it per client is what lets a
+  report state that rather than assert it.
+- `host_nic_receive` — the host's received bytes across the suite, from
+  `/proc/net/dev` or `netstat -ibn`, loopback excluded. It is the
+  real-provider leg's only independent witness, where nothing sits between the
+  client and the internet to count what it pulled.
 - `shaper_downstream_bytes` and `shaper_article_census` — shaped runs: the
   application bytes the shaper wrote to the client and, with a schema-3
   shaper, how many article requests the client sent, how many distinct
@@ -2329,6 +2450,39 @@ The example measures `sab-test-1000mb` over TLS, three repetitions per client.
 The target defaults to the host's native target on macOS and Windows and to
 `docker-linux` elsewhere.
 
+### Interleaved passes
+
+A shaped lane's link is held still by a shaper this harness controls, so one
+run per client in a randomized order gives every client the same conditions.
+A real provider holds nothing still: its load, its routing and its retention
+drift over the hours a leg takes, so a client measured only at the start is
+measured against a different internet than one measured only at the end.
+
+The external stack is therefore the one place in the harness that repeats a
+client on a lane. A phase whose `plan_spec` sets `interleaved` runs the
+declared client list forward, then reversed, then forward again — three passes
+by default, `interleaved_passes` to change it — with nothing between the arms
+but stopping the previous client. It is a repetition of the same shipped
+product with the same shipped defaults, never a second tuning of it, and it is
+refused on any other stack: the interleave replaces the randomization that is
+a shaped lane's own defence, and using it there would quietly weaken them. An
+interleaved leg's passes are its repetitions, so `repetitions` and
+`interleaved_passes` cannot be declared separately and then disagree.
+
+Setting `interleaved_summary` on the phase produces the leg's own summary
+alongside any paired one it declares (see [7. Summarize](#7-summarize)):
+per-client medians with min and max, every arm in run order with its local
+start time, and the host NIC receive delta beside each arm's payload.
+
+Each arm's NIC delta is read from the host's own interface counters —
+`/proc/net/dev` on Linux, `netstat -ibn` on macOS, loopback excluded — before
+and after the arm. It is a whole-host figure and therefore an upper bound on
+one client's traffic, never a substitute for the client's own accounting;
+both are reported and neither is derived from the other. A Windows host has
+no counter this harness reads and records it unavailable with that reason.
+
+`configs/chains/real-usenet.example.json` runs this way.
+
 ### What it cannot control
 
 The internet path, the provider's load and its caches change between runs, and
@@ -2367,3 +2521,8 @@ difference, and never compare its absolute times with a shaped lane's.
   never assumed from its version.
 - That the client matrix is exhaustive; clients outside the catalog are simply
   not measured.
+- That a client refusing a submission is a harness failure. nzbfast parks an
+  identical queued NZB as a held duplicate instead of running it; the harness
+  classifies that refusal as that client not finishing the fixture, with the
+  refusal recorded against it, so the phase still produces a result for every
+  other client. It is a client outcome, reported as one.
