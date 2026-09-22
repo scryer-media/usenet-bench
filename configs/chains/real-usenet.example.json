@@ -22,6 +22,7 @@
         "sabnzbd",
         "nzbget"
       ],
+      "interleaved_summary": true,
       "article_size": "700k",
       "plan_spec": {
         "fixtures": [
@@ -36,7 +37,8 @@
           "tls"
         ],
         "profile": "equivalent-throughput",
-        "repetitions": 3,
+        "interleaved": true,
+        "interleaved_passes": 3,
         "seed": 20260913
       }
     }

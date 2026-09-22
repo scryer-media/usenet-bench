@@ -28,6 +28,11 @@ type summaryReport struct {
 	// is the compatibility figure. They are never pooled with each other.
 	Aggregates []classAggregate `json:"aggregates"`
 	Subgroups  []classAggregate `json:"subgroups"`
+	// Provenance states the conditions the numbers above were taken under:
+	// which harness, which build of each client, which corpus, which host and
+	// which link. It is absent only when a summary is built from artifacts
+	// alone, without the execution manifest that binds them.
+	Provenance *reportProvenance `json:"provenance,omitempty"`
 }
 
 // aggregateStratum is comparisonStratum with the fixture replaced by its
@@ -168,6 +173,15 @@ type stratifiedComparison struct {
 	// shows the difference here. Like CPUTime it is never pooled with the
 	// timing summary and never fails the report closed.
 	PeakRSS counterComparison `json:"peak_rss"`
+	// DeviceWrites is the third secondary comparison: bytes written to block
+	// devices over the same paired blocks. It is the cost a wall clock on a
+	// fast disk hides -- a completion move that fell back to a copy, an
+	// unpack staging a second full copy, a repair pass rewriting what it just
+	// wrote -- and on the operator's slower disk it is the difference. Like
+	// the other two it is never pooled with the timing summary, and a lane
+	// with no block-io accounting (both native lanes today) reports it
+	// unavailable with a reason rather than as zero.
+	DeviceWrites counterComparison `json:"device_write_bytes"`
 	// Transfer is evidence, not a comparison: what each client pulled through
 	// the shaper on its finished blocks, next to how many articles it asked
 	// for. A client that finishes fast by fetching more than the NZB carries
@@ -250,8 +264,9 @@ type clientCounterAccounting struct {
 }
 
 const (
-	cpuTimeMetric = "cpu_time_nanoseconds"
-	peakRSSMetric = "peak_rss_bytes"
+	cpuTimeMetric     = "cpu_time_nanoseconds"
+	peakRSSMetric     = "peak_rss_bytes"
+	deviceWriteMetric = "device_write_bytes"
 )
 
 // completionCounts records, per stratum, how many randomized blocks each
@@ -291,6 +306,11 @@ type comparisonBlock struct {
 	candidateCPU     *float64
 	baselinePeakRSS  *float64
 	candidatePeakRSS *float64
+	// baselineDeviceWrite and candidateDeviceWrite are `device_write_bytes`
+	// of the same two runs, on the same terms: the bytes each client put on a
+	// block device while doing the job.
+	baselineDeviceWrite  *float64
+	candidateDeviceWrite *float64
 }
 
 // counterProvenance is one client's CPU counter source inside a stratum.
@@ -326,6 +346,8 @@ func counterObservation(metrics *benchmark.ResourceMetrics, metric string) (*flo
 		counter = metrics.CPUTimeNanoseconds
 	case peakRSSMetric:
 		counter = metrics.PeakRSSBytes
+	case deviceWriteMetric:
+		counter = metrics.DeviceWriteBytes
 	default:
 		return nil, counterProvenance{}, fmt.Sprintf("%s is not a counter this summary knows how to read", metric)
 	}
@@ -361,9 +383,15 @@ type summaryProductIdentity struct {
 // summaryExecutionContext is what the summarizer takes from an artifact
 // root's immutable execution manifest and snapshotted plan.
 type summaryExecutionContext struct {
-	Command     string
-	PlannedRuns map[string]benchmark.Run
-	Exclusions  []benchmark.ClientExclusion
+	Command string
+	// Manifest is the immutable manifest itself, kept so a report can state
+	// the conditions the run was taken under rather than re-derive them.
+	Manifest executionManifest
+	// InterleavedPasses is the snapshotted plan's pass count, zero for the
+	// randomized schedule every shaped lane uses.
+	InterleavedPasses int
+	PlannedRuns       map[string]benchmark.Run
+	Exclusions        []benchmark.ClientExclusion
 }
 
 func summarize(args []string) error {
@@ -373,7 +401,7 @@ func summarize(args []string) error {
 	var minimumBlocks, resamples int
 	var seed int64
 	flags.StringVar(&artifactRoot, "artifacts", "", "benchmark artifact root containing sequential queue.json files")
-	flags.StringVar(&mode, "mode", "sequential", "sequential (paired per-fixture comparison) or queue-drain (per-lane drain wall clock of a queue-transition root; --baseline and --candidate are not used)")
+	flags.StringVar(&mode, "mode", "sequential", "sequential (paired per-fixture comparison), queue-drain (per-lane drain wall clock of a queue-transition root) or interleaved (per-client median over the real-provider leg's forward/reverse passes); --baseline and --candidate are used by sequential only")
 	flags.StringVar(&baselineName, "baseline", "", "baseline client: weaver, sabnzbd, or nzbget")
 	flags.StringVar(&candidateName, "candidate", "", "candidate client: weaver, sabnzbd, or nzbget")
 	flags.IntVar(&minimumBlocks, "minimum-blocks", 20, "minimum complete paired randomized blocks per stratum")
@@ -392,8 +420,28 @@ func summarize(args []string) error {
 		}
 		return printJSON(report)
 	}
+	if mode == "interleaved" {
+		if artifactRoot == "" {
+			return fmt.Errorf("--artifacts is required")
+		}
+		artifacts, _, err := loadSequentialArtifacts(artifactRoot)
+		if err != nil {
+			return err
+		}
+		execution, err := loadSummaryExecutionContext(artifactRoot, "sequential")
+		if err != nil {
+			return err
+		}
+		report, err := buildInterleavedReport(artifacts, execution.InterleavedPasses)
+		if err != nil {
+			return err
+		}
+		provenance := buildReportProvenance(provenanceInputs{Artifacts: artifacts, Manifest: execution.Manifest})
+		report.Provenance = &provenance
+		return printJSON(report)
+	}
 	if mode != "sequential" {
-		return fmt.Errorf("--mode must be sequential or queue-drain, got %q", mode)
+		return fmt.Errorf("--mode must be sequential, queue-drain or interleaved, got %q", mode)
 	}
 	if artifactRoot == "" || baselineName == "" || candidateName == "" {
 		return fmt.Errorf("--artifacts, --baseline, and --candidate are required")
@@ -421,6 +469,12 @@ func summarize(args []string) error {
 	if err != nil {
 		return err
 	}
+	execution, err := loadSummaryExecutionContext(artifactRoot, "sequential")
+	if err != nil {
+		return err
+	}
+	provenance := buildReportProvenance(provenanceInputs{Artifacts: artifacts, Manifest: execution.Manifest})
+	report.Provenance = &provenance
 	return printJSON(report)
 }
 
@@ -609,7 +663,7 @@ func loadSummaryExecutionContext(root, command string) (summaryExecutionContext,
 	if len(plannedRuns) == 0 {
 		return summaryExecutionContext{}, fmt.Errorf("snapshotted plan has no runs for execution target %q", target)
 	}
-	return summaryExecutionContext{Command: manifest.Command, PlannedRuns: plannedRuns, Exclusions: planned.ClientExclusions}, nil
+	return summaryExecutionContext{Command: manifest.Command, Manifest: manifest, InterleavedPasses: planned.InterleavedPasses, PlannedRuns: plannedRuns, Exclusions: planned.ClientExclusions}, nil
 }
 
 func buildSummaryReport(artifacts []benchmark.QueueArtifact, exclusions []benchmark.ClientExclusion, baseline, candidate benchmark.Client, minimumBlocks int, seed int64, resamples int) (summaryReport, error) {
@@ -624,6 +678,7 @@ func buildSummaryReport(artifacts []benchmark.QueueArtifact, exclusions []benchm
 	aggregateProducts := make(map[aggregateProductKey]summaryProductIdentity)
 	cpuAccounts := make(map[summaryProductKey]*counterAccount)
 	rssAccounts := make(map[summaryProductKey]*counterAccount)
+	deviceWriteAccounts := make(map[summaryProductKey]*counterAccount)
 	cpuCaveats := make(map[comparisonStratum]map[string]bool)
 	transfers := make(map[summaryProductKey]*transferAccount)
 	classes := make(map[string]fixture.FixtureClass)
@@ -782,7 +837,7 @@ func buildSummaryReport(artifacts []benchmark.QueueArtifact, exclusions []benchm
 		measurement := float64(job.AdapterResult.SubmissionToTerminalNanoseconds)
 		// The secondary counters ride along with a finished run only: a run
 		// that did not finish has no wall clock to pair either.
-		var cpuValue, peakRSSValue *float64
+		var cpuValue, peakRSSValue, deviceWriteValue *float64
 		if !didNotFinish {
 			value, provenance, reason := counterObservation(job.AdapterResult.ResourceMetrics, cpuTimeMetric)
 			account := cpuAccounts[productKey]
@@ -811,6 +866,20 @@ func buildSummaryReport(artifacts []benchmark.QueueArtifact, exclusions []benchm
 				rssAccount.reasons[rssReason] = true
 			}
 			peakRSSValue = rssValue
+
+			writeValue, writeProvenance, writeReason := counterObservation(job.AdapterResult.ResourceMetrics, deviceWriteMetric)
+			writeAccount := deviceWriteAccounts[productKey]
+			if writeAccount == nil {
+				writeAccount = newCounterAccount()
+				deviceWriteAccounts[productKey] = writeAccount
+			}
+			if writeValue != nil {
+				writeAccount.measured[writeProvenance]++
+			} else {
+				writeAccount.unavailable++
+				writeAccount.reasons[writeReason] = true
+			}
+			deviceWriteValue = writeValue
 
 			if artifact.StorageAttestation != nil && artifact.StorageAttestation.CPUAccountingCaveat != "" {
 				caveats := cpuCaveats[stratum]
@@ -848,6 +917,7 @@ func buildSummaryReport(artifacts []benchmark.QueueArtifact, exclusions []benchm
 				block.baselineUncertainty = float64(job.AdapterResult.TerminalObservationUncertainty)
 				block.baselineCPU = cpuValue
 				block.baselinePeakRSS = peakRSSValue
+				block.baselineDeviceWrite = deviceWriteValue
 			}
 		} else {
 			if block.candidate != nil || block.candidateDNF {
@@ -860,6 +930,7 @@ func buildSummaryReport(artifacts []benchmark.QueueArtifact, exclusions []benchm
 				block.candidateUncertainty = float64(job.AdapterResult.TerminalObservationUncertainty)
 				block.candidateCPU = cpuValue
 				block.candidatePeakRSS = peakRSSValue
+				block.candidateDeviceWrite = deviceWriteValue
 			}
 		}
 	}
@@ -956,6 +1027,15 @@ func buildSummaryReport(artifacts []benchmark.QueueArtifact, exclusions []benchm
 			return summaryReport{}, fmt.Errorf("summarize peak RSS for stratum %+v: %w", stratum, err)
 		}
 		comparison.PeakRSS = peakRSS
+		// Device writes carry the storage caveat for the same reason CPU time
+		// does not carry it here: on an NFS profile the bytes leave the
+		// container as network traffic and the cgroup's block-io counter sees
+		// none of them, so the figure means something different and says so.
+		deviceWrites, err := buildDeviceWriteComparison(stratum, blocks, repetitions, deviceWriteAccounts, deviceWriteCaveats(storageProfile), baseline, candidate, minimumBlocks, seed, resamples)
+		if err != nil {
+			return summaryReport{}, fmt.Errorf("summarize device writes for stratum %+v: %w", stratum, err)
+		}
+		comparison.DeviceWrites = deviceWrites
 		comparison.Transfer = buildTransferEvidence(stratum, transfers, baseline, candidate)
 		if len(samples) < minimumBlocks {
 			if completion.BaselineDidNotFinish == 0 && completion.CandidateDidNotFinish == 0 {
@@ -1073,6 +1153,28 @@ func buildCPUTimeComparison(stratum comparisonStratum, blocks map[int]*compariso
 // stratum's blocks. The sampled counter is the one compared, never the
 // platform high-water hint beside it: the hint means a different thing on
 // each host, so pairing two of them would pair two different quantities.
+// buildDeviceWriteComparison pairs the two clients' device-write counters over
+// a stratum's blocks, on the same terms as the other two secondary counters.
+func buildDeviceWriteComparison(stratum comparisonStratum, blocks map[int]*comparisonBlock, repetitions []int, accounts map[summaryProductKey]*counterAccount, caveats map[string]bool, baseline, candidate benchmark.Client, minimumBlocks int, seed int64, resamples int) (counterComparison, error) {
+	return buildCounterComparison(deviceWriteMetric, "device writes", "bytes written to device", stratum, blocks, repetitions, accounts, caveats,
+		func(block *comparisonBlock) (*float64, *float64) {
+			return block.baselineDeviceWrite, block.candidateDeviceWrite
+		}, baseline, candidate, minimumBlocks, seed, resamples)
+}
+
+// deviceWriteCaveats states what an NFS storage profile does to the counter:
+// the payload leaves the container over the network, so the cgroup's block-io
+// accounting does not see it and the figure is not comparable with a local
+// profile's.
+func deviceWriteCaveats(profile *benchmark.StorageProfile) map[string]bool {
+	if profile == nil || profile.Kind != benchmark.StorageNFS {
+		return nil
+	}
+	return map[string]bool{
+		"storage profile is NFS: the payload leaves the container as network traffic, so the container's block-io counter does not account for it and this figure is not comparable with a local-storage lane": true,
+	}
+}
+
 func buildPeakRSSComparison(stratum comparisonStratum, blocks map[int]*comparisonBlock, repetitions []int, accounts map[summaryProductKey]*counterAccount, caveats map[string]bool, baseline, candidate benchmark.Client, minimumBlocks int, seed int64, resamples int) (counterComparison, error) {
 	return buildCounterComparison(peakRSSMetric, "peak RSS", "peak RSS", stratum, blocks, repetitions, accounts, caveats,
 		func(block *comparisonBlock) (*float64, *float64) {

@@ -59,6 +59,7 @@ func TestAdapterResultMustMatchTLSPlanMetadata(t *testing.T) {
 			InstructionsRetired:  UnavailableMeasurement("client_process", "test", "1", "not collected in unit test"),
 			PeakRSSBytes:         UnavailableMeasurement("client_container", "test", "1", "not collected in unit test"),
 			PeakRSSHighWaterHint: UnavailableMeasurement("client_container", "test", "1", "not collected in unit test"),
+			DeviceWriteBytes:     UnavailableMeasurement("client_container", "test", "1", "not collected in unit test"),
 		},
 	}
 	if err := result.ValidateFor(run); err == nil {
@@ -106,6 +107,7 @@ func TestAdapterResultRequiresExplicitResourceCounterOutcomes(t *testing.T) {
 		InstructionsRetired:  UnavailableMeasurement("client_process", "test", "1", "hardware counter not exposed"),
 		PeakRSSBytes:         MeasuredMeasurement("client_container", "test", "1", 8192),
 		PeakRSSHighWaterHint: UnavailableMeasurement("client_container", "test", "1", "high-water mark not exposed"),
+		DeviceWriteBytes:     UnavailableMeasurement("client_container", "test", "1", "not collected in unit test"),
 	}
 	if err := result.ValidateFor(run); err != nil {
 		t.Fatalf("explicit unavailable instructions counter should validate: %v", err)

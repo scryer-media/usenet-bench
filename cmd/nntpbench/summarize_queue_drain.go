@@ -21,6 +21,9 @@ type queueDrainReport struct {
 	SchemaVersion int              `json:"schema_version"`
 	Metric        string           `json:"metric"`
 	Lanes         []queueDrainLane `json:"lanes"`
+	// Provenance states the conditions these lanes ran under, on the same
+	// terms as the sequential summary's.
+	Provenance *reportProvenance `json:"provenance,omitempty"`
 }
 
 type queueDrainLane struct {
@@ -61,6 +64,7 @@ func loadQueueDrainReport(root string) (queueDrainReport, error) {
 		return queueDrainReport{}, err
 	}
 	report := queueDrainReport{SchemaVersion: 1, Metric: QueueDrainMetric}
+	var collected []benchmark.QueueArtifact
 	seenRuns := make(map[string]bool, len(execution.PlannedRuns))
 	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -85,6 +89,7 @@ func loadQueueDrainReport(root string) (queueDrainReport, error) {
 			return fmt.Errorf("queue-drain artifact %s: %w", path, err)
 		}
 		report.Lanes = append(report.Lanes, lane)
+		collected = append(collected, artifact)
 		for _, run := range artifact.Runs {
 			if seenRuns[run.ID] {
 				return fmt.Errorf("duplicate planned queue-drain run %s", run.ID)
@@ -103,6 +108,8 @@ func loadQueueDrainReport(root string) (queueDrainReport, error) {
 		return queueDrainReport{}, fmt.Errorf("incomplete queue-drain execution: found %d of %d planned runs", len(seenRuns), len(execution.PlannedRuns))
 	}
 	sort.Slice(report.Lanes, func(left, right int) bool { return report.Lanes[left].SuiteID < report.Lanes[right].SuiteID })
+	provenance := buildReportProvenance(provenanceInputs{Artifacts: collected, Manifest: execution.Manifest})
+	report.Provenance = &provenance
 	return report, nil
 }
 

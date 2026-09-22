@@ -145,6 +145,7 @@ func runSingle(ctx context.Context, cfg Config) (nativeRun, error) {
 			InstructionsRetired:  nativeInstructionMeasurement(),
 			PeakRSSBytes:         peakRSSMeasurement,
 			PeakRSSHighWaterHint: peakRSSHint,
+			DeviceWriteBytes:     nativeDeviceWriteMeasurement(),
 		},
 	}
 	if err := result.ValidateFor(benchmark.Run{
@@ -242,6 +243,7 @@ func runSequentialQueue(ctx context.Context, cfg Config) error {
 		ClientIdentity:           clientIdentity,
 		ClientVersion:            clientVersion,
 		RenderedConfigSHA256:     renderedConfigSHA256,
+		Connections:              cfg.Connections,
 		ResourceMetrics:          suiteMetrics,
 	}
 	if err := validateNativeSequentialQueueResult(result); err != nil {
@@ -487,6 +489,25 @@ func (process *nativeProcess) memoryMeasurement() (benchmark.CounterMeasurement,
 			benchmark.UnavailableMeasurement("client_process", "native-memory-high-water", runtime.GOOS, reason)
 	}
 	return process.memory.measurement(process.command.ProcessState)
+}
+
+// nativeDeviceWriteMeasurement states why the native lanes carry no
+// bytes-written column. The Docker lane's figure is the client's cgroup, which
+// charges the client and every helper it starts and nothing else on the host.
+// Neither native host offers that: macOS has no per-process-tree block-io
+// accounting at all, and Windows' IO_COUNTERS are per process and per handle
+// rather than per device, so a sum over a job object counts writes to pipes
+// and to the console alongside writes to the disk. A host-wide counter would
+// be a different quantity again -- every other tenant of the machine included
+// -- so it is recorded unavailable rather than filled with something that
+// would not compare with the Docker lane's.
+func nativeDeviceWriteMeasurement() benchmark.CounterMeasurement {
+	return benchmark.UnavailableMeasurement(
+		"client_process_tree",
+		"native-device-writes",
+		runtime.GOOS,
+		"bytes written to device are not collected on the native lanes: neither host exposes per-process-tree block-io accounting comparable with the container cgroup counter",
+	)
 }
 
 func nativeInstructionMeasurement() benchmark.CounterMeasurement {

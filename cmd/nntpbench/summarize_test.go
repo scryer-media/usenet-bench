@@ -550,6 +550,7 @@ func summaryUnavailableResources() *benchmark.ResourceMetrics {
 		InstructionsRetired:  benchmark.UnavailableMeasurement("client_container", "perf", "test", "unavailable in test"),
 		PeakRSSBytes:         benchmark.UnavailableMeasurement("client_container", "cgroup-memory", "test", "unavailable in test"),
 		PeakRSSHighWaterHint: benchmark.UnavailableMeasurement("client_container", "cgroup-memory-peak", "test", "unavailable in test"),
+		DeviceWriteBytes:     benchmark.MeasuredMeasurement("client_container", "cgroup-v2-io.stat-wbytes", "test", 4<<20),
 	}
 }
 
@@ -686,6 +687,7 @@ func summaryTestArtifactWithCPU(client benchmark.Client, repetition int, measure
 		InstructionsRetired:  benchmark.UnavailableMeasurement(scope, "none", "test", "not collected in tests"),
 		PeakRSSBytes:         benchmark.UnavailableMeasurement(scope, "none", "test", "not collected in tests"),
 		PeakRSSHighWaterHint: benchmark.UnavailableMeasurement(scope, "none", "test", "not collected in tests"),
+		DeviceWriteBytes:     benchmark.MeasuredMeasurement(scope, "cgroup-v2-io.stat-wbytes", "test", 4<<20),
 	}
 	// The artifact carries the adapter result twice (top level and inside
 	// the job) and the summarizer requires both copies to agree.
@@ -704,6 +706,7 @@ func summaryTestArtifactWithPeakRSS(client benchmark.Client, repetition int, mea
 		InstructionsRetired:  benchmark.UnavailableMeasurement(scope, "none", "test", "not collected in tests"),
 		PeakRSSBytes:         benchmark.MeasuredMeasurement(scope, "cgroup-v2-memory.stat-anon-sampled", "test", peakBytes),
 		PeakRSSHighWaterHint: benchmark.UnavailableMeasurement(scope, "none", "test", "not collected in tests"),
+		DeviceWriteBytes:     benchmark.MeasuredMeasurement(scope, "cgroup-v2-io.stat-wbytes", "test", 4<<20),
 	}
 	artifact.AdapterResult.Jobs[0].ResourceMetrics = metrics
 	artifact.Jobs[0].AdapterResult.ResourceMetrics = metrics

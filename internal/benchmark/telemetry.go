@@ -109,11 +109,21 @@ func (m CounterMeasurement) validate(name string) error {
 // of per-process peaks on Windows, the whole container including page cache
 // under cgroup. It is a hint for interpreting the sampled figure, never a
 // cross-platform number.
+//
+// DeviceWriteBytes is the third cost counter beside CPU time and resident
+// memory: the bytes the client wrote to block devices over the same window,
+// summed across devices. It is what separates a client that finishes fast
+// from one that finishes fast by writing the payload more than once -- a copy
+// out of an intermediate directory that could have been a rename, a repair
+// pass rewriting what it just wrote. It is recorded with its own provenance
+// like every other counter, and a lane with no block-io accounting records it
+// unavailable with a reason rather than as zero.
 type ResourceMetrics struct {
 	CPUTimeNanoseconds   CounterMeasurement `json:"cpu_time_nanoseconds"`
 	InstructionsRetired  CounterMeasurement `json:"instructions_retired"`
 	PeakRSSBytes         CounterMeasurement `json:"peak_rss_bytes"`
 	PeakRSSHighWaterHint CounterMeasurement `json:"peak_rss_high_water_hint"`
+	DeviceWriteBytes     CounterMeasurement `json:"device_write_bytes"`
 }
 
 func (m ResourceMetrics) Validate() error {
@@ -126,5 +136,8 @@ func (m ResourceMetrics) Validate() error {
 	if err := m.PeakRSSBytes.validate("peak_rss_bytes"); err != nil {
 		return err
 	}
-	return m.PeakRSSHighWaterHint.validate("peak_rss_high_water_hint")
+	if err := m.PeakRSSHighWaterHint.validate("peak_rss_high_water_hint"); err != nil {
+		return err
+	}
+	return m.DeviceWriteBytes.validate("device_write_bytes")
 }

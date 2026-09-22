@@ -74,6 +74,11 @@ const (
 	RarparArchiveToolchain  ArchiveToolchain = "rarpar"
 )
 
+// DefaultInterleavedPasses is the real-provider leg's default: forward,
+// reversed, forward. Two passes are a pair with no middle, and the third is
+// what makes a median an observation rather than the mean of two.
+const DefaultInterleavedPasses = 3
+
 type PlanOptions struct {
 	FixtureIDs        []string
 	Clients           []Client
@@ -87,6 +92,17 @@ type PlanOptions struct {
 	ArticleProfile    ArticleProfile
 	Repetitions       int
 	Seed              int64
+	// InterleavedPasses turns the randomized block schedule into a fixed
+	// forward/reverse interleave: pass 1 runs the declared client order, pass
+	// 2 runs it reversed, pass 3 forward again. It is for the real-provider
+	// leg and nothing else. A shaped lane's link is attested and stationary,
+	// so randomizing the order is the right defence there; the internet is
+	// neither, and a drift over the session lands entirely on whichever
+	// client a shuffle happened to schedule late. Forward-then-reverse
+	// cancels a monotone drift to first order and, unlike a shuffle, does so
+	// in a schedule a reader can check by eye. When it is set it must equal
+	// Repetitions: one pass is one repetition of every lane.
+	InterleavedPasses int
 	// ClientExclusions removes one client from the lanes of one fixture, with
 	// the reason recorded in the plan. A client that deterministically cannot
 	// finish a fixture is a known result, not a measurement worth repeating;
@@ -130,10 +146,14 @@ type Plan struct {
 	StorageProfile    StorageProfile     `json:"storage_profile"`
 	// ArticleProfile is the decoded article size the fixtures in this plan
 	// were seeded at. It is a stratum, not a setting: see article.go.
-	ArticleProfile   ArticleProfile    `json:"article_profile"`
-	Repetitions      int               `json:"repetitions"`
-	ClientExclusions []ClientExclusion `json:"client_exclusions,omitempty"`
-	Runs             []Run             `json:"runs"`
+	ArticleProfile ArticleProfile `json:"article_profile"`
+	Repetitions    int            `json:"repetitions"`
+	// InterleavedPasses is non-zero on a plan whose run order is the fixed
+	// forward/reverse interleave rather than the randomized blocks. See
+	// PlanOptions.InterleavedPasses.
+	InterleavedPasses int               `json:"interleaved_passes,omitempty"`
+	ClientExclusions  []ClientExclusion `json:"client_exclusions,omitempty"`
+	Runs              []Run             `json:"runs"`
 }
 
 // Run is one planned fixture submission. Primary execution gives every run a
@@ -199,6 +219,7 @@ func BuildPlan(options PlanOptions) (Plan, error) {
 		StorageProfile:    options.StorageProfile,
 		ArticleProfile:    options.ArticleProfile,
 		Repetitions:       options.Repetitions,
+		InterleavedPasses: options.InterleavedPasses,
 		ClientExclusions:  append([]ClientExclusion(nil), options.ClientExclusions...),
 	}
 	type round struct {
@@ -217,11 +238,26 @@ func BuildPlan(options PlanOptions) (Plan, error) {
 			}
 		}
 	}
+	interleaved := options.InterleavedPasses > 0
 	random := rand.New(rand.NewSource(options.Seed)) // #nosec G404 -- deterministic schedule, not security.
-	random.Shuffle(len(rounds), func(i, j int) { rounds[i], rounds[j] = rounds[j], rounds[i] })
+	if interleaved {
+		// The interleave is a declared schedule, not a sample: rounds stay in
+		// pass order and the lanes inside each round alternate direction. The
+		// randomizer is left untouched so a non-interleaved plan built from
+		// the same seed is bit-for-bit the plan it always was.
+		sort.SliceStable(rounds, func(left, right int) bool { return rounds[left].repetition < rounds[right].repetition })
+	} else {
+		random.Shuffle(len(rounds), func(i, j int) { rounds[i], rounds[j] = rounds[j], rounds[i] })
+	}
 	for _, benchmarkRound := range rounds {
 		lanes := benchmarkLanes(options.Clients, options.ArchiveToolchains, benchmarkRound.target)
-		random.Shuffle(len(lanes), func(i, j int) { lanes[i], lanes[j] = lanes[j], lanes[i] })
+		if interleaved {
+			if benchmarkRound.repetition%2 == 0 {
+				reverseLanes(lanes)
+			}
+		} else {
+			random.Shuffle(len(lanes), func(i, j int) { lanes[i], lanes[j] = lanes[j], lanes[i] })
+		}
 		for _, lane := range lanes {
 			if _, excluded := ClientExclusionFor(options.ClientExclusions, lane.client, benchmarkRound.fixtureID); excluded {
 				continue
@@ -277,6 +313,7 @@ func (p Plan) Validate() error {
 		ArticleProfile:    p.ArticleProfile,
 		Repetitions:       p.Repetitions,
 		Seed:              p.Seed,
+		InterleavedPasses: p.InterleavedPasses,
 		ClientExclusions:  p.ClientExclusions,
 	}); err != nil {
 		return err
@@ -294,6 +331,11 @@ func (p Plan) Validate() error {
 	expected *= len(p.Transports) * p.Repetitions
 	if len(p.Runs) != expected {
 		return fmt.Errorf("benchmark plan contains %d runs, expected %d", len(p.Runs), expected)
+	}
+	if p.InterleavedPasses > 0 {
+		if err := validateInterleavedOrder(p); err != nil {
+			return err
+		}
 	}
 	seen := map[string]bool{}
 	targets := map[ExecutionTarget]bool{}
@@ -411,6 +453,19 @@ func validateOptions(options PlanOptions) error {
 	if options.Profile != ProfileStock && options.Profile != ProfileEquivalentThroughput {
 		return fmt.Errorf("unsupported benchmark profile %q", options.Profile)
 	}
+	if options.InterleavedPasses < 0 {
+		return fmt.Errorf("interleaved passes must not be negative")
+	}
+	if options.InterleavedPasses > 0 && options.InterleavedPasses != options.Repetitions {
+		return fmt.Errorf("interleaved passes (%d) must equal repetitions (%d): one pass is one repetition of every lane",
+			options.InterleavedPasses, options.Repetitions)
+	}
+	// The interleave answers a drift the shaped lanes do not have, and it
+	// replaces the randomization that is the shaped lanes' own defence. Using
+	// it anywhere else would quietly weaken them.
+	if options.InterleavedPasses > 0 && options.ServerLink.ID != LinkExternal {
+		return fmt.Errorf("interleaved passes are for the external provider link only, not %q", options.ServerLink.ID)
+	}
 	if err := options.ArticleProfile.Validate(); err != nil {
 		return err
 	}
@@ -484,6 +539,63 @@ func benchmarkLanes(clients []Client, toolchains []ArchiveToolchain, target Exec
 		}
 	}
 	return lanes
+}
+
+// validateInterleavedOrder re-derives the declared forward/reverse schedule
+// and requires the saved plan to be exactly it. A saved plan is the
+// authoritative order of every run, and the claim this leg rests on is the
+// order itself, so it is checked against the rule rather than trusted.
+func validateInterleavedOrder(p Plan) error {
+	type scheduled struct {
+		fixtureID  string
+		transport  Transport
+		target     ExecutionTarget
+		client     Client
+		toolchain  ArchiveToolchain
+		repetition int
+	}
+	expected := make([]scheduled, 0, len(p.Runs))
+	for pass := 1; pass <= p.InterleavedPasses; pass++ {
+		for _, fixtureID := range p.FixtureIDs {
+			for _, transport := range p.Transports {
+				for _, target := range p.ExecutionTargets {
+					lanes := benchmarkLanes(p.Clients, p.ArchiveToolchains, target)
+					if pass%2 == 0 {
+						reverseLanes(lanes)
+					}
+					for _, lane := range lanes {
+						if _, excluded := ClientExclusionFor(p.ClientExclusions, lane.client, fixtureID); excluded {
+							continue
+						}
+						expected = append(expected, scheduled{
+							fixtureID: fixtureID, transport: transport, target: target,
+							client: lane.client, toolchain: lane.archiveToolchain, repetition: pass,
+						})
+					}
+				}
+			}
+		}
+	}
+	if len(expected) != len(p.Runs) {
+		return fmt.Errorf("interleaved plan has %d runs, the forward/reverse schedule has %d", len(p.Runs), len(expected))
+	}
+	for index, run := range p.Runs {
+		want := expected[index]
+		if run.FixtureID != want.fixtureID || run.Transport != want.transport || run.ExecutionTarget != want.target ||
+			run.Client != want.client || run.ArchiveToolchain != want.toolchain || run.Repetition != want.repetition {
+			return fmt.Errorf("interleaved plan run %s is not the run the forward/reverse schedule places at position %d (want %s on %s, pass %d)",
+				run.ID, index+1, want.client, want.fixtureID, want.repetition)
+		}
+	}
+	return nil
+}
+
+// reverseLanes turns a pass's lane order around in place: the B-arm of the
+// ABBA interleave.
+func reverseLanes(lanes []benchmarkLane) {
+	for left, right := 0, len(lanes)-1; left < right; left, right = left+1, right-1 {
+		lanes[left], lanes[right] = lanes[right], lanes[left]
+	}
 }
 
 func archiveToolchainAllowed(client Client, toolchain ArchiveToolchain, target ExecutionTarget) bool {

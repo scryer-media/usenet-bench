@@ -41,6 +41,10 @@ func captureHostFacts() map[string]hostFact {
 		}
 		facts[key] = hostFact{Value: strings.TrimSpace(string(raw))}
 	}
+	// The Docker lane's results depend on the daemon as much as on the host
+	// kernel, so its version is a host fact on every platform; a host with no
+	// daemon records the failure and moves on.
+	command("docker_version", "docker", "version", "--format", "{{.Server.Version}} (client {{.Client.Version}})")
 	switch runtime.GOOS {
 	case "darwin":
 		command("cpu_model", "sysctl", "-n", "machdep.cpu.brand_string")

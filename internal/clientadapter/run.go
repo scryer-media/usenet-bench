@@ -42,6 +42,7 @@ func Run(ctx context.Context, cfg Config) error {
 	// container is created. This deliberately includes client startup for every
 	// product; wall time remains the queue-acceptance-to-terminal boundary.
 	cpu := startCPUSampler(ctx, container.docker, container.name)
+	deviceWrites := startDeviceWriteSampler(ctx, container.docker, container.name)
 	memory := startMemorySampler(ctx, container.docker, container.name)
 	instructions := startInstructionRecorder(ctx, cfg, container)
 	metricsCollected := false
@@ -90,6 +91,7 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	telemetryCtx, cancelTelemetry := context.WithTimeout(context.Background(), 15*time.Second)
 	cpuMeasurement := cpu.finish(telemetryCtx)
+	deviceWriteMeasurement := deviceWrites.finish(telemetryCtx)
 	cancelTelemetry()
 	peakRSSMeasurement, peakRSSHint := memory.finish()
 	instructionMeasurement := instructions.finish()
@@ -127,6 +129,7 @@ func Run(ctx context.Context, cfg Config) error {
 			InstructionsRetired:  instructionMeasurement,
 			PeakRSSBytes:         peakRSSMeasurement,
 			PeakRSSHighWaterHint: peakRSSHint,
+			DeviceWriteBytes:     deviceWriteMeasurement,
 		},
 	}
 	if err := result.ValidateFor(benchmark.Run{

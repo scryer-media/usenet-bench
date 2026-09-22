@@ -72,6 +72,8 @@ func main() {
 		err = chain(os.Args[2:])
 	case "summarize":
 		err = summarize(os.Args[2:])
+	case "report":
+		err = report(os.Args[2:])
 	case "preflight":
 		err = preflight(os.Args[2:])
 	case "import-nzb":
@@ -1169,6 +1171,7 @@ Commands:
   pin            Pin a client image by digest in the adapter catalog and pre-pull it
   chain          Drive a whole declared session: shaper, phases and summaries
   summarize      Produce paired per-stratum statistics from verified sequential artifacts
+  report         Render a summary as text, conditions first
   preflight      Check a host: target, client executables, and a raw stack
   import-nzb     Make a fixture from an NZB posted on a real provider
   attest         Write article-size provenance for a corpus seeded without it

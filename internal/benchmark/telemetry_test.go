@@ -11,6 +11,7 @@ func TestResourceMetricsCarryIndependentCounterProvenance(t *testing.T) {
 		InstructionsRetired:  UnavailableMeasurement("client_process", "linux-perf", "macos", "native Linux perf is unavailable"),
 		PeakRSSBytes:         MeasuredMeasurement("client_process_tree", "ps-process-tree-sampled", "darwin@250ms", 4096),
 		PeakRSSHighWaterHint: UnavailableMeasurement("client_process", "getrusage-ru_maxrss", "darwin", "the client did not exit"),
+		DeviceWriteBytes:     UnavailableMeasurement("client_process_tree", "native-device-writes", "darwin", "not collected on the native lanes"),
 	}
 	if err := metrics.Validate(); err != nil {
 		t.Fatal(err)

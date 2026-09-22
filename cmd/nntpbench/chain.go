@@ -220,8 +220,14 @@ type ChainPhase struct {
 	// against; QueueDrainSummary asks for the drain summary instead.
 	SummarizeBaselines []string `json:"summarize_baselines,omitempty"`
 	QueueDrainSummary  bool     `json:"queue_drain_summary,omitempty"`
-	SummarizeCandidate string   `json:"summarize_candidate,omitempty"`
-	MinimumBlocks      int      `json:"minimum_blocks,omitempty"`
+	// InterleavedSummary asks for the real-provider leg's own summary: each
+	// client's median wall clock over its passes, every arm in run order, and
+	// the host NIC delta beside each arm's payload. It is produced in addition
+	// to any paired summary the phase declares, because the two answer
+	// different questions and neither replaces the other.
+	InterleavedSummary bool   `json:"interleaved_summary,omitempty"`
+	SummarizeCandidate string `json:"summarize_candidate,omitempty"`
+	MinimumBlocks      int    `json:"minimum_blocks,omitempty"`
 }
 
 // ChainPlanSpec is everything a phase's plan is built from. The link
@@ -246,6 +252,30 @@ type ChainPlanSpec struct {
 	Profile           string   `json:"profile"`
 	Repetitions       int      `json:"repetitions"`
 	Seed              int64    `json:"seed"`
+
+	// Interleaved runs the real-provider leg as an ABBA schedule instead of a
+	// randomized one: the client list forward, then reversed, then forward
+	// again, for InterleavedPasses passes. Nothing else in the harness uses
+	// it, and it is refused anywhere but an external stack.
+	//
+	// The shaped lanes do not need it. Their link is held to a fixed rate by
+	// a shaper this harness controls, so a randomized schedule with one run
+	// per client per lane already gives every client the same conditions. A
+	// real provider gives nobody the same conditions twice: its load, its
+	// routing and its retention all drift over the hours a leg takes, so a
+	// client measured only at the start is measured against a different
+	// internet than one measured only at the end. Running forward and then
+	// reversed puts each client on both sides of that drift, and the
+	// summarizer takes the median of its passes rather than one arm's luck.
+	//
+	// It is the only place in the harness that repeats a client on a lane,
+	// and it is a repetition of the same shipped product with the same
+	// shipped defaults, not a second tuning of it.
+	Interleaved bool `json:"interleaved,omitempty"`
+	// InterleavedPasses is how many forward/reverse passes to run. Three is
+	// the default: two is a pair with no middle, and the third pass is what
+	// makes the median an observation rather than an average of two.
+	InterleavedPasses int `json:"interleaved_passes,omitempty"`
 
 	StorageProfile string `json:"storage_profile,omitempty"`
 	NFSLink        string `json:"nfs_link,omitempty"`
@@ -673,6 +703,15 @@ func validateChainConfig(config ChainConfig) error {
 		}
 		if (phase.ServerLink == benchmark.LinkExternal) != (config.Stack == ChainStackExternal) {
 			return fmt.Errorf("phase %s: server_link %q belongs to an %s stack only, and an %s stack measures nothing else", phase.Name, benchmark.LinkExternal, ChainStackExternal, ChainStackExternal)
+		}
+		if phase.PlanSpec != nil && (phase.PlanSpec.Interleaved || phase.PlanSpec.InterleavedPasses > 0) && config.Stack != ChainStackExternal {
+			return fmt.Errorf("phase %s: plan_spec.interleaved is the real-provider leg's schedule; a shaped lane runs one run per client per lane", phase.Name)
+		}
+		if phase.InterleavedSummary && (phase.PlanSpec == nil || !phase.PlanSpec.Interleaved) {
+			return fmt.Errorf("phase %s: interleaved_summary reads a leg run with plan_spec.interleaved", phase.Name)
+		}
+		if phase.PlanSpec != nil && phase.PlanSpec.InterleavedPasses > 0 && !phase.PlanSpec.Interleaved {
+			return fmt.Errorf("phase %s: plan_spec.interleaved_passes needs plan_spec.interleaved", phase.Name)
 		}
 		if config.Stack == ChainStackExternal {
 			if phase.NFS != nil {
@@ -1342,6 +1381,13 @@ func summarizeChainPhase(config ChainConfig, phase ChainPhase, result *ChainPhas
 			result.Summaries = append(result.Summaries, path)
 		}
 	}
+	if phase.InterleavedSummary {
+		name := fmt.Sprintf("summary-%s-interleaved", sanitizeChainName(phase.Name))
+		args := []string{"summarize", "--mode", "interleaved", "--artifacts", phase.Artifacts}
+		if path, ok := runChainSummary(config, name, args, log); ok {
+			result.Summaries = append(result.Summaries, path)
+		}
+	}
 	if phase.QueueDrainSummary {
 		name := fmt.Sprintf("summary-%s-queue-drain", sanitizeChainName(phase.Name))
 		args := []string{"summarize", "--mode", "queue-drain", "--artifacts", phase.Artifacts}
@@ -1683,6 +1729,21 @@ func buildChainPlan(phase ChainPhase, target string) (benchmark.Plan, error) {
 	if err != nil {
 		return benchmark.Plan{}, err
 	}
+	// An interleaved leg's passes *are* its repetitions: the plan's repetition
+	// index is the pass number, so the two cannot be declared separately and
+	// then disagree.
+	repetitions := spec.Repetitions
+	interleavedPasses := 0
+	if spec.Interleaved {
+		interleavedPasses = spec.InterleavedPasses
+		if interleavedPasses == 0 {
+			interleavedPasses = benchmark.DefaultInterleavedPasses
+		}
+		if repetitions != 0 && repetitions != interleavedPasses {
+			return benchmark.Plan{}, fmt.Errorf("plan_spec declares %d repetitions and %d interleaved passes; an interleaved leg's passes are its repetitions", repetitions, interleavedPasses)
+		}
+		repetitions = interleavedPasses
+	}
 	exclusions := make([]benchmark.ClientExclusion, 0, len(spec.ExcludeClients))
 	for _, exclusion := range spec.ExcludeClients {
 		if exclusion.Client == "" || exclusion.FixtureID == "" || exclusion.Reason == "" {
@@ -1704,9 +1765,10 @@ func buildChainPlan(phase ChainPhase, target string) (benchmark.Plan, error) {
 		ServerLink:        link,
 		StorageProfile:    storage,
 		ArticleProfile:    article,
-		Repetitions:       spec.Repetitions,
+		Repetitions:       repetitions,
 		Seed:              spec.Seed,
 		ClientExclusions:  exclusions,
+		InterleavedPasses: interleavedPasses,
 	})
 }
 

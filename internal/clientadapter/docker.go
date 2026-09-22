@@ -3,6 +3,7 @@ package clientadapter
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -11,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/scryer-media/usenet-bench/internal/benchmark"
 )
 
 type dockerClient struct {
@@ -123,12 +126,17 @@ func downloadMounts(cfg Config, downloadsDir, incompleteDir string) []string {
 	if cfg.IncompleteVolume != "" {
 		incomplete = volumeMount(cfg.IncompleteVolume, "/downloads/incomplete")
 	}
-	complete := mount(cfg.OutputDir, "/downloads/complete", false)
+	complete := mount(cfg.OutputDir, containerCompletionDir, false)
 	if cfg.CompleteVolume != "" {
-		complete = volumeMount(cfg.CompleteVolume, "/downloads/complete")
+		complete = volumeMount(cfg.CompleteVolume, containerCompletionDir)
 	}
 	return []string{incomplete, complete}
 }
+
+// containerCompletionDir is where every client's finished output lands inside
+// its container. It is the directory whose mount decides whether the final
+// move is a rename or a copy, so it is the one the parity block records.
+const containerCompletionDir = "/downloads/complete"
 
 func volumeMount(name, destination string) string {
 	return "type=volume,src=" + name + ",dst=" + destination
@@ -337,4 +345,88 @@ func (container *runningContainer) cleanup() {
 		}
 	}
 	_, _ = container.docker.run(ctx, "rm", "--force", container.name)
+}
+
+// dockerInspectRuntime is the shape `docker inspect` is asked for. Only the
+// fields the report states are decoded: the point is to record what ran, not
+// to snapshot the daemon.
+type dockerInspectRuntime struct {
+	ID     string `json:"Id"`
+	Image  string `json:"Image"`
+	Config struct {
+		Image string `json:"Image"`
+	} `json:"Config"`
+	HostConfig struct {
+		NanoCPUs    int64  `json:"NanoCpus"`
+		CPUQuota    int64  `json:"CpuQuota"`
+		CPUPeriod   int64  `json:"CpuPeriod"`
+		Memory      int64  `json:"Memory"`
+		PidsLimit   *int64 `json:"PidsLimit"`
+		NetworkMode string `json:"NetworkMode"`
+	} `json:"HostConfig"`
+	Mounts []struct {
+		Type        string `json:"Type"`
+		Name        string `json:"Name"`
+		Source      string `json:"Source"`
+		Destination string `json:"Destination"`
+	} `json:"Mounts"`
+}
+
+// inspectRuntime reads back what the daemon actually gave the container. It
+// is deliberately taken after the container is running rather than assembled
+// from the flags the harness passed: a daemon default, a cgroup driver that
+// cannot honour a limit, or a compose-level override all leave the intended
+// configuration intact while changing what ran, and a parity claim has to be
+// about what ran.
+//
+// workingDir is the container path whose mount decides whether the client's
+// final move is a rename or a copy; the mount carrying it is the one
+// recorded.
+func (d dockerClient) inspectRuntime(ctx context.Context, name, workingDir string) benchmark.ContainerRuntime {
+	output, err := d.run(ctx, "inspect", "--format", "{{json .}}", name)
+	if err != nil {
+		return benchmark.ContainerRuntime{Unavailable: "inspect client container runtime: " + err.Error()}
+	}
+	var inspected dockerInspectRuntime
+	if err := json.Unmarshal([]byte(output), &inspected); err != nil {
+		return benchmark.ContainerRuntime{Unavailable: "decode client container runtime: " + err.Error()}
+	}
+	if strings.TrimSpace(inspected.ID) == "" {
+		return benchmark.ContainerRuntime{Unavailable: "client container runtime readback carried no container id"}
+	}
+	runtime := benchmark.ContainerRuntime{
+		Inspected:        true,
+		ContainerID:      inspected.ID,
+		Image:            inspected.Config.Image,
+		ImageDigest:      inspected.Image,
+		NanoCPUs:         inspected.HostConfig.NanoCPUs,
+		CPUQuotaMicros:   inspected.HostConfig.CPUQuota,
+		CPUPeriodMicros:  inspected.HostConfig.CPUPeriod,
+		MemoryLimitBytes: inspected.HostConfig.Memory,
+		NetworkMode:      inspected.HostConfig.NetworkMode,
+	}
+	if inspected.HostConfig.PidsLimit != nil {
+		runtime.PidsLimit = *inspected.HostConfig.PidsLimit
+	}
+	best := ""
+	for _, mount := range inspected.Mounts {
+		destination := strings.TrimSuffix(mount.Destination, "/")
+		if destination != workingDir && !strings.HasPrefix(workingDir, destination+"/") {
+			continue
+		}
+		// The longest matching destination is the mount the directory
+		// actually lives on: /downloads/complete wins over /downloads.
+		if len(destination) <= len(best) {
+			continue
+		}
+		best = destination
+		source := mount.Source
+		if mount.Type == "volume" && strings.TrimSpace(mount.Name) != "" {
+			source = mount.Name
+		}
+		runtime.WorkingDirMountType = mount.Type
+		runtime.WorkingDirMountSource = source
+		runtime.WorkingDirMountDestination = mount.Destination
+	}
+	return runtime
 }

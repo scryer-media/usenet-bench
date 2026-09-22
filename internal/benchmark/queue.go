@@ -112,7 +112,14 @@ type QueueAdapterResult struct {
 	ClientIdentity           string            `json:"client_identity"`
 	ClientVersion            string            `json:"client_version"`
 	RenderedConfigSHA256     string            `json:"rendered_config_sha256"`
-	ResourceMetrics          ResourceMetrics   `json:"resource_metrics"`
+	// Connections is the server connection count this client was given. Every
+	// client in a lane gets the same one; recording it per client is what
+	// lets a report state that rather than assert it.
+	Connections     int             `json:"connections,omitempty"`
+	ResourceMetrics ResourceMetrics `json:"resource_metrics"`
+	// ContainerRuntime is the Docker lane's readback of what the client
+	// container actually ran with. Native lanes have no container and omit it.
+	ContainerRuntime *ContainerRuntime `json:"container_runtime,omitempty"`
 }
 
 type QueueJobResult struct {
@@ -149,15 +156,19 @@ type QueueArtifact struct {
 	ShaperDownstreamBytes uint64              `json:"shaper_downstream_bytes,omitempty"`
 	// ShaperArticleCensus is present when the shaper counted the client's
 	// command lines (attestation schema 3).
-	ShaperArticleCensus            *ShaperArticleCensus `json:"shaper_article_census,omitempty"`
-	StorageAttestation             *StorageAttestation  `json:"storage_attestation,omitempty"`
-	Jobs                           []QueueJobArtifact   `json:"jobs,omitempty"`
-	QueueWallClockNanoseconds      int64                `json:"queue_wall_clock_nanoseconds,omitempty"`
-	VerifiedWallClockNanoseconds   int64                `json:"verified_wall_clock_nanoseconds,omitempty"`
-	QueueVerifiedAt                *time.Time           `json:"queue_verified_at,omitempty"`
-	VerificationElapsedNanoseconds int64                `json:"verification_elapsed_nanoseconds,omitempty"`
-	HarnessElapsedNanoseconds      int64                `json:"harness_elapsed_nanoseconds,omitempty"`
-	Error                          string               `json:"error,omitempty"`
+	ShaperArticleCensus *ShaperArticleCensus `json:"shaper_article_census,omitempty"`
+	StorageAttestation  *StorageAttestation  `json:"storage_attestation,omitempty"`
+	// HostNICReceive is the host's received byte count across this suite: the
+	// only independent witness on an unshaped lane, where nothing sits between
+	// the client and the internet to count what it pulled.
+	HostNICReceive                 *NICReceiveDelta   `json:"host_nic_receive,omitempty"`
+	Jobs                           []QueueJobArtifact `json:"jobs,omitempty"`
+	QueueWallClockNanoseconds      int64              `json:"queue_wall_clock_nanoseconds,omitempty"`
+	VerifiedWallClockNanoseconds   int64              `json:"verified_wall_clock_nanoseconds,omitempty"`
+	QueueVerifiedAt                *time.Time         `json:"queue_verified_at,omitempty"`
+	VerificationElapsedNanoseconds int64              `json:"verification_elapsed_nanoseconds,omitempty"`
+	HarnessElapsedNanoseconds      int64              `json:"harness_elapsed_nanoseconds,omitempty"`
+	Error                          string             `json:"error,omitempty"`
 }
 
 type QueueJobArtifact struct {
@@ -565,8 +576,15 @@ func executeQueueSuite(parent context.Context, config RunConfig, suite queueSuit
 	}
 	resultPath := filepath.Join(suiteDir, "adapter-result.json")
 	logPath := filepath.Join(suiteDir, "adapter.log")
-	if err := invokeQueueAdapter(parent, config, first, adapter, input.Jobs[0].NZBPath, input.Jobs[0].ArchivePassword, outputDir, configDir, resultPath, logPath, inputPath, store.Environment()); err != nil {
-		artifact.Error = err.Error()
+	// The host's receive counter is read immediately around the client's own
+	// arm, so the delta covers the client and whatever else the host was
+	// doing -- which is exactly the contamination it exists to expose.
+	finishNIC := MeasureNICReceive(parent)
+	adapterErr := invokeQueueAdapter(parent, config, first, adapter, input.Jobs[0].NZBPath, input.Jobs[0].ArchivePassword, outputDir, configDir, resultPath, logPath, inputPath, store.Environment())
+	nicDelta := finishNIC(context.WithoutCancel(parent))
+	artifact.HostNICReceive = &nicDelta
+	if adapterErr != nil {
+		artifact.Error = adapterErr.Error()
 		return artifact
 	}
 	result, err := loadQueueAdapterResult(resultPath)

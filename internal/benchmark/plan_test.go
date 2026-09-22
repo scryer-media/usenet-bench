@@ -250,3 +250,68 @@ func TestDefaultProfilesMakeSABTLSExplicitlyUnverified(t *testing.T) {
 		}
 	}
 }
+
+// The real-provider leg's schedule has to be readable by eye: pass one in the
+// declared client order, pass two reversed, pass three forward again. A
+// shuffle would hide a drift in whichever client it happened to schedule
+// late, and a schedule nobody can check is not evidence.
+func TestInterleavedPlanRunsForwardThenReversed(t *testing.T) {
+	options := PlanOptions{
+		FixtureIDs:        []string{"fixture"},
+		Clients:           []Client{Weaver, SABnzbd, NZBGet},
+		Transports:        []Transport{TLS},
+		Targets:           []ExecutionTarget{MacOSNative},
+		Repetitions:       3,
+		InterleavedPasses: 3,
+		Seed:              11,
+		ServerLink:        ServerLinkProfile{ID: LinkExternal, Scope: externalProviderScope},
+	}
+	plan, err := BuildPlan(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := plan.Validate(); err != nil {
+		t.Fatalf("interleaved plan rejected: %v", err)
+	}
+	var order []Client
+	for _, run := range plan.Runs {
+		order = append(order, run.Client)
+	}
+	want := []Client{
+		Weaver, SABnzbd, NZBGet,
+		NZBGet, SABnzbd, Weaver,
+		Weaver, SABnzbd, NZBGet,
+	}
+	if !reflect.DeepEqual(order, want) {
+		t.Fatalf("run order = %v, want forward/reverse/forward %v", order, want)
+	}
+	for index, run := range plan.Runs {
+		if run.Repetition != index/3+1 {
+			t.Fatalf("run %d is in pass %d", index, run.Repetition)
+		}
+	}
+}
+
+// The interleave replaces the randomization that is a shaped lane's own
+// defence against ordering effects, so it is refused anywhere but the
+// unshaped provider link, and a pass count that is not a repetition count
+// would silently truncate the schedule.
+func TestInterleavedPlanIsRefusedOffTheProviderLink(t *testing.T) {
+	options := PlanOptions{
+		FixtureIDs:        []string{"fixture"},
+		Clients:           []Client{Weaver, SABnzbd},
+		Transports:        []Transport{TLS},
+		Targets:           []ExecutionTarget{MacOSNative},
+		Repetitions:       3,
+		InterleavedPasses: 3,
+		Seed:              11,
+	}
+	if _, err := BuildPlan(options); err == nil {
+		t.Fatal("a shaped lane accepted the interleaved schedule")
+	}
+	options.ServerLink = ServerLinkProfile{ID: LinkExternal, Scope: externalProviderScope}
+	options.InterleavedPasses = 2
+	if _, err := BuildPlan(options); err == nil {
+		t.Fatal("passes and repetitions were allowed to disagree")
+	}
+}
