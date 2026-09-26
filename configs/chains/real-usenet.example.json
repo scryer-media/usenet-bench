@@ -22,6 +22,7 @@
         "sabnzbd",
         "nzbget"
       ],
+      "minimum_blocks": 3,
       "interleaved_summary": true,
       "article_size": "700k",
       "plan_spec": {

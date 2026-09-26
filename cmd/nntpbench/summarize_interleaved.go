@@ -109,6 +109,9 @@ func buildInterleavedReport(artifacts []benchmark.QueueArtifact, passes int) (in
 		contaminated int
 	}
 	accounts := make(map[clientKey]*clientAccount)
+	if err := benchmark.ValidatePinnedAgreement(artifacts); err != nil {
+		return interleavedReport{}, err
+	}
 	for _, artifact := range artifacts {
 		if err := artifact.ValidateEvidence(); err != nil {
 			return interleavedReport{}, fmt.Errorf("artifact %s: %w", artifact.SuiteID, err)

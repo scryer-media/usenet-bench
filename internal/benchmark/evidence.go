@@ -99,7 +99,9 @@ func (a QueueArtifact) ValidateEvidence() error {
 		if err := j.Workload.Articles.ValidateFor(m, j.Run.ArticleProfile.RawBytes, j.Workload.NZBSHA256); err != nil {
 			return fmt.Errorf("run %s: %w", j.Run.ID, err)
 		}
-		if m.Case.ID != j.Run.FixtureID || !j.FixtureClass.Valid() || m.Case.Class != j.FixtureClass || m.Case.PostEncodingOrDefault() != j.Encoding || !reflect.DeepEqual(m.Repair, j.Repair) || len(m.ExpectedFiles) == 0 || len(m.ArchiveFiles) == 0 {
+		// An external post's manifest expects no files: its oracle is the
+		// output the first finished run pinned, which the verification carries.
+		if m.Case.ID != j.Run.FixtureID || !j.FixtureClass.Valid() || m.Case.Class != j.FixtureClass || m.Case.PostEncodingOrDefault() != j.Encoding || !reflect.DeepEqual(m.Repair, j.Repair) || (len(m.ExpectedFiles) == 0 && m.External == nil) || len(m.ArchiveFiles) == 0 {
 			return fmt.Errorf("invalid fixture class or manifest evidence")
 		}
 		if j.Outcome == "dnf" {
@@ -119,6 +121,22 @@ func (a QueueArtifact) ValidateEvidence() error {
 }
 
 func (v OutputVerification) ValidateFor(m fixture.GeneratedManifest) error {
+	if len(m.ExpectedFiles) == 0 && m.External != nil {
+		if v.Reference != ReferencePinned && v.Reference != ReferencePinnedHere {
+			return fmt.Errorf("external output verification lacks a pinned reference")
+		}
+		// The pin itself is not in the artifact. Each run's verified files
+		// stand in for it here, and ValidatePinnedAgreement holds every run
+		// of the fixture to the same files.
+		m.ExpectedFiles = pinnedFiles(v)
+		for _, f := range m.ExpectedFiles {
+			if f.Size < minimumPinnedFileBytes {
+				return fmt.Errorf("invalid verified output %q", f.Path)
+			}
+		}
+	} else if v.Reference != "" {
+		return fmt.Errorf("generated fixture output verification names a pinned reference")
+	}
 	if v.FixtureID != m.Case.ID || len(v.Files) != len(m.ExpectedFiles) || len(v.Files) == 0 {
 		return fmt.Errorf("incomplete output verification")
 	}
@@ -132,7 +150,9 @@ func (v OutputVerification) ValidateFor(m fixture.GeneratedManifest) error {
 		if path.IsAbs(f.ActualPath) || path.Clean(f.ActualPath) != f.ActualPath || f.ActualPath == ".." || strings.HasPrefix(f.ActualPath, "../") || strings.Contains(f.ActualPath, "\\") {
 			return fmt.Errorf("invalid output-relative path")
 		}
-		if strings.Contains(want.Path, "/") && f.ActualPath != want.Path && !strings.HasSuffix(f.ActualPath, "/"+want.Path) {
+		// A pinned path starts with the pinning client's own job directory
+		// and was matched by content alone, as VerifyOutput matches it.
+		if v.Reference == "" && strings.Contains(want.Path, "/") && f.ActualPath != want.Path && !strings.HasSuffix(f.ActualPath, "/"+want.Path) {
 			return fmt.Errorf("saved output lost required topology")
 		}
 	}
@@ -150,6 +170,38 @@ func (v OutputVerification) ValidateFor(m fixture.GeneratedManifest) error {
 		}
 		seen[f.ActualPath] = true
 		seenSidecars[f.ExpectedPath] = true
+	}
+	return nil
+}
+
+// pinnedFiles is the oracle an external fixture's verification was held to,
+// as the files it matched.
+func pinnedFiles(v OutputVerification) []fixture.FileDigest {
+	files := make([]fixture.FileDigest, 0, len(v.Files))
+	for _, f := range v.Files {
+		files = append(files, fixture.FileDigest{Path: f.ExpectedPath, Size: f.Size, BLAKE3: f.BLAKE3})
+	}
+	return files
+}
+
+// ValidatePinnedAgreement checks that every verified run of an external
+// fixture matched the same pinned output. The pin lives beside the fixture,
+// not in the artifacts, so a root whose runs were verified against different
+// pins -- one moved aside between runs -- would otherwise compare clients on
+// different payloads.
+func ValidatePinnedAgreement(artifacts []QueueArtifact) error {
+	pins := make(map[string][]fixture.FileDigest)
+	for _, artifact := range artifacts {
+		for _, job := range artifact.Jobs {
+			if job.Verification == nil || job.Workload == nil || job.Workload.Manifest.External == nil || len(job.Workload.Manifest.ExpectedFiles) != 0 {
+				continue
+			}
+			files := pinnedFiles(*job.Verification)
+			if previous, ok := pins[job.Run.FixtureID]; ok && !reflect.DeepEqual(previous, files) {
+				return fmt.Errorf("runs of external fixture %s were verified against different pinned output", job.Run.FixtureID)
+			}
+			pins[job.Run.FixtureID] = files
+		}
 	}
 	return nil
 }

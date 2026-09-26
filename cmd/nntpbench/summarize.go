@@ -690,6 +690,9 @@ func buildSummaryReport(artifacts []benchmark.QueueArtifact, exclusions []benchm
 	// and is refused rather than silently split into two comparisons that look
 	// like one report.
 	var storageProfile *benchmark.StorageProfile
+	if err := benchmark.ValidatePinnedAgreement(artifacts); err != nil {
+		return summaryReport{}, err
+	}
 	for _, artifact := range artifacts {
 		if err := artifact.ValidateEvidence(); err != nil {
 			return summaryReport{}, fmt.Errorf("artifact %s: %w", artifact.SuiteID, err)
