@@ -1208,6 +1208,25 @@ one that answers in 10 ms — a selection bias against the slower API, not a
 precision gain — while a window wider than 250 ms marks a poll the controller
 missed and still fails the run.
 
+On the native lane the poll is the sanity bound rather than the last word.
+The public APIs stamp completion in whole seconds, but the clients' own logs
+do better: SABnzbd logs its "Download Completed" notification to the
+millisecond and weaver logs its terminal post-processing line to the
+microsecond, both from the process that did the work, on the same host clock
+the adapter reads. Once the poll has confirmed the terminal state and the
+process has exited, the adapter takes that logged instant as the terminal,
+provided it lies inside the polled window, and records the uncertainty as the
+log's resolution with `terminal_observation_source` set to `client_log`. A
+log that is missing, names the completion more than once, or disagrees with
+the poll leaves the polled window in place with the source `public_api` and
+says why in `adapter.log`. NZBGet's log carries whole-second timestamps, so
+its terminal stays polled. Without this, a bare-file post that SABnzbd
+finishes in two seconds spends most of the polled window already complete:
+the job leaves the queue when decoding finishes, the history row appears
+only after the client has written it, and the status call blocks meanwhile,
+so the window is the client's commit latency rather than anything the poll
+interval controls.
+
 Two other modes exist and are labelled apart from the headline:
 
 - `queue-transition` — generate and seed `direct-mkv`, plan **only** that

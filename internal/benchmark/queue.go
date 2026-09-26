@@ -123,25 +123,30 @@ type QueueAdapterResult struct {
 }
 
 type QueueJobResult struct {
-	TimingClock                     string           `json:"timing_clock"`
-	RunID                           string           `json:"run_id"`
-	JobID                           string           `json:"job_id"`
-	SubmissionStartedAt             time.Time        `json:"submission_started_at"`
-	AcceptedAt                      time.Time        `json:"accepted_at"`
-	QueuedAt                        time.Time        `json:"queued_at"`
-	FixtureWallClockNanoseconds     int64            `json:"fixture_wall_clock_nanoseconds"`
-	ResourceMetrics                 *ResourceMetrics `json:"resource_metrics,omitempty"`
-	TerminalStatus                  string           `json:"terminal_status"`
-	TerminalError                   string           `json:"terminal_error,omitempty"`
-	ProcessingTimingAvailable       bool             `json:"processing_timing_available"`
-	ProcessingTimingError           string           `json:"processing_timing_error,omitempty"`
-	ProcessingStartedAt             time.Time        `json:"processing_started_at"`
-	CompletionAt                    time.Time        `json:"completion_at"`
-	TerminalObservationLowerBound   time.Time        `json:"terminal_observation_lower_bound"`
-	TerminalObservedAt              time.Time        `json:"terminal_observed_at"`
-	TerminalObservationUncertainty  int64            `json:"terminal_observation_uncertainty_nanoseconds"`
-	SubmissionToTerminalNanoseconds int64            `json:"submission_to_terminal_nanoseconds"`
-	ProcessingWallClockNanoseconds  int64            `json:"processing_wall_clock_nanoseconds"`
+	TimingClock                    string           `json:"timing_clock"`
+	RunID                          string           `json:"run_id"`
+	JobID                          string           `json:"job_id"`
+	SubmissionStartedAt            time.Time        `json:"submission_started_at"`
+	AcceptedAt                     time.Time        `json:"accepted_at"`
+	QueuedAt                       time.Time        `json:"queued_at"`
+	FixtureWallClockNanoseconds    int64            `json:"fixture_wall_clock_nanoseconds"`
+	ResourceMetrics                *ResourceMetrics `json:"resource_metrics,omitempty"`
+	TerminalStatus                 string           `json:"terminal_status"`
+	TerminalError                  string           `json:"terminal_error,omitempty"`
+	ProcessingTimingAvailable      bool             `json:"processing_timing_available"`
+	ProcessingTimingError          string           `json:"processing_timing_error,omitempty"`
+	ProcessingStartedAt            time.Time        `json:"processing_started_at"`
+	CompletionAt                   time.Time        `json:"completion_at"`
+	TerminalObservationLowerBound  time.Time        `json:"terminal_observation_lower_bound"`
+	TerminalObservedAt             time.Time        `json:"terminal_observed_at"`
+	TerminalObservationUncertainty int64            `json:"terminal_observation_uncertainty_nanoseconds"`
+	// TerminalObservationSource says what bounds the terminal observation:
+	// "public_api" for a polled window, "client_log" for the completion
+	// instant the client logged itself. Empty on artifacts written before
+	// the distinction existed, which were all polled.
+	TerminalObservationSource       string `json:"terminal_observation_source,omitempty"`
+	SubmissionToTerminalNanoseconds int64  `json:"submission_to_terminal_nanoseconds"`
+	ProcessingWallClockNanoseconds  int64  `json:"processing_wall_clock_nanoseconds"`
 }
 
 type QueueArtifact struct {

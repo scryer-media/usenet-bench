@@ -52,6 +52,9 @@ type nativeRun struct {
 	submissionStartedAt time.Time
 	acceptedAt          time.Time
 	terminal            clientadapter.TerminalObservation
+	// terminalSource says what bounds the terminal observation: the polled
+	// public API, or the completion instant the client logged itself.
+	terminalSource string
 	// terminalStatus is "succeeded" or "failed": a client that reported its
 	// own failure is a recorded outcome, not a harness error. Everything that
 	// stops the run before a terminal observation is still returned as an
@@ -121,6 +124,17 @@ func runSingle(ctx context.Context, cfg Config) (nativeRun, error) {
 	if err != nil {
 		return nativeRun{}, err
 	}
+	// The process has stopped, so its log is complete: narrow the polled
+	// window to the completion the client logged itself. A log that cannot
+	// do that leaves the polled observation in place and says why on stderr.
+	terminalSource := terminalSourcePublicAPI
+	if terminalStatus == "succeeded" {
+		if reported, reportErr := clientReportedTerminal(cfg.Client, cfg.ConfigDir, completion); reportErr != nil {
+			fmt.Fprintf(os.Stderr, "nativeadapter: keeping the polled terminal observation for %s: %v\n", cfg.RunID, reportErr)
+		} else {
+			completion, terminalSource = reported, terminalSourceClientLog
+		}
+	}
 	peakRSSMeasurement, peakRSSHint := process.memoryMeasurement()
 	result := benchmark.AdapterResult{
 		SchemaVersion:            7,
@@ -168,6 +182,7 @@ func runSingle(ctx context.Context, cfg Config) (nativeRun, error) {
 		submissionStartedAt: queueTiming.SubmissionStartedAt,
 		acceptedAt:          queueTiming.AcceptedAt,
 		terminal:            completion,
+		terminalSource:      terminalSource,
 		terminalStatus:      terminalStatus,
 		terminalError:       terminalError,
 	}, nil
@@ -217,6 +232,7 @@ func runSequentialQueue(ctx context.Context, cfg Config) error {
 			TerminalObservationLowerBound:   nativeRun.terminal.LowerBound,
 			TerminalObservedAt:              nativeRun.terminal.ObservedAt,
 			TerminalObservationUncertainty:  nativeRun.terminal.ObservedAt.Sub(nativeRun.terminal.LowerBound).Nanoseconds(),
+			TerminalObservationSource:       nativeRun.terminalSource,
 			SubmissionToTerminalNanoseconds: nativeRun.terminal.ObservedAt.Sub(nativeRun.submissionStartedAt).Nanoseconds(),
 		}
 		jobs = append(jobs, job)
