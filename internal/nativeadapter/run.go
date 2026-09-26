@@ -129,7 +129,7 @@ func runSingle(ctx context.Context, cfg Config) (nativeRun, error) {
 	// do that leaves the polled observation in place and says why on stderr.
 	terminalSource := terminalSourcePublicAPI
 	if terminalStatus == "succeeded" {
-		if reported, reportErr := clientReportedTerminal(cfg.Client, cfg.ConfigDir, completion); reportErr != nil {
+		if reported, reportErr := clientReportedTerminal(cfg.Client, cfg.ConfigDir, completion, cfg.PollInterval); reportErr != nil {
 			fmt.Fprintf(os.Stderr, "nativeadapter: keeping the polled terminal observation for %s: %v\n", cfg.RunID, reportErr)
 		} else {
 			completion, terminalSource = reported, terminalSourceClientLog

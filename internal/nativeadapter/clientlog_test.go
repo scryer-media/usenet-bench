@@ -56,7 +56,7 @@ func TestSABnzbdLogNarrowsThePolledTerminalToItsCompletionNotification(t *testin
 	completed := localStamp(t, "2006-01-02 15:04:05,000", "2026-09-26 10:18:25,747")
 	polled := clientadapter.TerminalObservation{LowerBound: completed.Add(-79 * time.Millisecond), ObservedAt: completed.Add(89 * time.Millisecond)}
 
-	narrowed, err := clientReportedTerminal(benchmark.SABnzbd, configDir, polled)
+	narrowed, err := clientReportedTerminal(benchmark.SABnzbd, configDir, polled, 50*time.Millisecond)
 	if err != nil {
 		t.Fatalf("narrow from the client log: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestWeaverLogNarrowsThePolledTerminalToItsCompletionLine(t *testing.T) {
 	}
 	polled := clientadapter.TerminalObservation{LowerBound: completed.Add(-37 * time.Millisecond), ObservedAt: completed.Add(64 * time.Millisecond)}
 
-	narrowed, err := clientReportedTerminal(benchmark.Weaver, configDir, polled)
+	narrowed, err := clientReportedTerminal(benchmark.Weaver, configDir, polled, 100*time.Millisecond)
 	if err != nil {
 		t.Fatalf("narrow from the client log: %v", err)
 	}
@@ -84,18 +84,36 @@ func TestWeaverLogNarrowsThePolledTerminalToItsCompletionLine(t *testing.T) {
 	}
 }
 
+// A client logs its completion a few milliseconds before the state its
+// status API answers from catches up, so the logged instant may lead the
+// polled window's start by up to one poll interval.
+func TestALoggedCompletionJustBeforeThePolledWindowIsAccepted(t *testing.T) {
+	configDir := t.TempDir()
+	writeClientLog(t, configDir, "logs/sabnzbd.log", sabnzbdCompletionLog)
+	completed := localStamp(t, "2006-01-02 15:04:05,000", "2026-09-26 10:18:25,747")
+	polled := clientadapter.TerminalObservation{LowerBound: completed.Add(9 * time.Millisecond), ObservedAt: completed.Add(100 * time.Millisecond)}
+
+	narrowed, err := clientReportedTerminal(benchmark.SABnzbd, configDir, polled, 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("a 9 ms lead inside a 50 ms poll interval was refused: %v", err)
+	}
+	if !narrowed.LowerBound.Equal(completed) {
+		t.Fatalf("narrowed observation %+v is not the logged millisecond starting %v", narrowed, completed)
+	}
+}
+
 // The poll saw the job pending at the window's start and terminal at its
-// end, so a logged completion outside that window contradicts the poll and
-// cannot replace it.
+// end, so a logged completion outside that window, beyond the start slack,
+// contradicts the poll and cannot replace it.
 func TestALoggedCompletionOutsideThePolledWindowIsRefused(t *testing.T) {
 	configDir := t.TempDir()
 	writeClientLog(t, configDir, "logs/sabnzbd.log", sabnzbdCompletionLog)
 	completed := localStamp(t, "2006-01-02 15:04:05,000", "2026-09-26 10:18:25,747")
 	for name, polled := range map[string]clientadapter.TerminalObservation{
-		"logged before the window": {LowerBound: completed.Add(20 * time.Millisecond), ObservedAt: completed.Add(120 * time.Millisecond)},
+		"logged before the window": {LowerBound: completed.Add(60 * time.Millisecond), ObservedAt: completed.Add(160 * time.Millisecond)},
 		"logged after the window":  {LowerBound: completed.Add(-120 * time.Millisecond), ObservedAt: completed.Add(-20 * time.Millisecond)},
 	} {
-		kept, err := clientReportedTerminal(benchmark.SABnzbd, configDir, polled)
+		kept, err := clientReportedTerminal(benchmark.SABnzbd, configDir, polled, 50*time.Millisecond)
 		if err == nil || !strings.Contains(err.Error(), "outside the polled terminal window") {
 			t.Fatalf("%s: err = %v, want a window refusal", name, err)
 		}
@@ -117,7 +135,7 @@ func TestTheClientLogMustNameTheCompletionExactlyOnce(t *testing.T) {
 	} {
 		configDir := t.TempDir()
 		writeClientLog(t, configDir, "logs/sabnzbd.log", contents)
-		kept, err := clientReportedTerminal(benchmark.SABnzbd, configDir, polled)
+		kept, err := clientReportedTerminal(benchmark.SABnzbd, configDir, polled, 50*time.Millisecond)
 		if err == nil {
 			t.Fatalf("%s: narrowed to %+v, want a refusal", name, kept)
 		}
@@ -126,7 +144,7 @@ func TestTheClientLogMustNameTheCompletionExactlyOnce(t *testing.T) {
 		}
 	}
 	configDir := t.TempDir()
-	if _, err := clientReportedTerminal(benchmark.SABnzbd, configDir, polled); err == nil {
+	if _, err := clientReportedTerminal(benchmark.SABnzbd, configDir, polled, 50*time.Millisecond); err == nil {
 		t.Fatal("a missing log narrowed the observation")
 	}
 }
@@ -134,7 +152,7 @@ func TestTheClientLogMustNameTheCompletionExactlyOnce(t *testing.T) {
 // NZBGet's log carries whole-second timestamps, so its terminal stays polled.
 func TestAClientWithoutSubSecondLogTimestampsStaysPolled(t *testing.T) {
 	polled := clientadapter.TerminalObservation{LowerBound: time.Now(), ObservedAt: time.Now().Add(time.Millisecond)}
-	kept, err := clientReportedTerminal(benchmark.NZBGet, t.TempDir(), polled)
+	kept, err := clientReportedTerminal(benchmark.NZBGet, t.TempDir(), polled, 50*time.Millisecond)
 	if err == nil || kept != polled {
 		t.Fatalf("NZBGet narrowed to %+v with err %v; want the polled observation and a refusal", kept, err)
 	}

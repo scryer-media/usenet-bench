@@ -36,10 +36,17 @@ const (
 //
 // The polled window is kept as the sanity bound: the logged instant must lie
 // inside it, since the poll saw the job pending at the window's start and
-// terminal at its end. A log that disagrees, is missing, or names the moment
-// more than once is reported as an error and the polled observation stands.
-// Clients whose logs carry no sub-second timestamps get no narrowing.
-func clientReportedTerminal(client benchmark.Client, configDir string, polled clientadapter.TerminalObservation) (clientadapter.TerminalObservation, error) {
+// terminal at its end. The start is allowed one poll interval of slack,
+// because a client logs its completion a few milliseconds before the state
+// its status API answers from catches up, so a status request that started
+// just before the log line can still answer "pending" from the older state.
+// That lead measures 0.4 to 16 ms on the Windows lane, against poll
+// intervals of 50 and 100 ms, and it never runs the other way: a log that
+// claims completion after the poll saw it is a different log. A log that
+// disagrees beyond that, is missing, or names the moment more than once is
+// reported as an error and the polled observation stands. Clients whose logs
+// carry no sub-second timestamps get no narrowing.
+func clientReportedTerminal(client benchmark.Client, configDir string, polled clientadapter.TerminalObservation, pollInterval time.Duration) (clientadapter.TerminalObservation, error) {
 	var (
 		path       string
 		resolution time.Duration
@@ -64,8 +71,8 @@ func clientReportedTerminal(client benchmark.Client, configDir string, polled cl
 	// The log stamps the instant at its resolution, truncated, so the true
 	// instant lies within one resolution step after the stamp.
 	observation := clientadapter.TerminalObservation{LowerBound: reported, ObservedAt: reported.Add(resolution)}
-	if reported.Before(polled.LowerBound) || observation.ObservedAt.After(polled.ObservedAt) {
-		return polled, fmt.Errorf("%s logged its completion at %s, outside the polled terminal window %s to %s", client, reported.Format(time.RFC3339Nano), polled.LowerBound.Format(time.RFC3339Nano), polled.ObservedAt.Format(time.RFC3339Nano))
+	if reported.Before(polled.LowerBound.Add(-pollInterval)) || observation.ObservedAt.After(polled.ObservedAt) {
+		return polled, fmt.Errorf("%s logged its completion at %s, outside the polled terminal window %s to %s (start slack %s)", client, reported.Format(time.RFC3339Nano), polled.LowerBound.Format(time.RFC3339Nano), polled.ObservedAt.Format(time.RFC3339Nano), pollInterval)
 	}
 	return observation, nil
 }

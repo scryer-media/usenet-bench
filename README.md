@@ -1215,7 +1215,10 @@ millisecond and weaver logs its terminal post-processing line to the
 microsecond, both from the process that did the work, on the same host clock
 the adapter reads. Once the poll has confirmed the terminal state and the
 process has exited, the adapter takes that logged instant as the terminal,
-provided it lies inside the polled window, and records the uncertainty as the
+provided it lies inside the polled window (the window's start gets one poll
+interval of slack, because a client logs its completion a few milliseconds
+before the state its status API answers from catches up), and records the
+uncertainty as the
 log's resolution with `terminal_observation_source` set to `client_log`. A
 log that is missing, names the completion more than once, or disagrees with
 the poll leaves the polled window in place with the source `public_api` and
