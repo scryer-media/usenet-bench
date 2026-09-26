@@ -335,18 +335,22 @@ func TestARunningNZBGetIsReady(t *testing.T) {
 	}
 }
 
-// fakeSAB answers SABnzbd's queue and history calls from a script: the job is
-// downloading until finishAfter polls have passed, then it is in history. The
-// queue call is slow, as SABnzbd's is on a busy host.
+// fakeSAB answers SABnzbd's queue and history calls from a script keyed on
+// history requests: for the first finishAfter of them the job is downloading
+// in the queue, for the next postProcess it is in history post-processing, and
+// after that it is complete in history. The queue call is slow, as SABnzbd's
+// is on a busy host.
 type fakeSAB struct {
-	mu          sync.Mutex
-	queueDelay  time.Duration
-	finishAfter int
-	polls       int
-	// firstQueueDone is when the first queue answer was written, and
-	// firstHistory is when the first history request arrived.
-	firstQueueDone time.Time
-	firstHistory   time.Time
+	mu            sync.Mutex
+	queueDelay    time.Duration
+	finishAfter   int
+	postProcess   int
+	historyPolls  int
+	queueRequests int
+	// lastQueueDone is when the latest queue answer was written.
+	lastQueueDone time.Time
+	// historyFilters holds the nzo_ids filter of every history request.
+	historyFilters []string
 }
 
 func (fake *fakeSAB) handler(t *testing.T) http.Handler {
@@ -361,24 +365,22 @@ func (fake *fakeSAB) handler(t *testing.T) http.Handler {
 		switch mode := r.URL.Query().Get("mode"); mode {
 		case "queue":
 			time.Sleep(fake.queueDelay)
-			fake.polls++
+			fake.queueRequests++
 			slots := []map[string]any{}
-			if fake.polls <= fake.finishAfter {
+			if fake.historyPolls <= fake.finishAfter {
 				slots = append(slots, map[string]any{"nzo_id": "SABnzbd_nzo_1", "status": "Downloading"})
 			}
 			body = map[string]any{"queue": map[string]any{"slots": slots}}
-			defer func() {
-				if fake.firstQueueDone.IsZero() {
-					fake.firstQueueDone = time.Now()
-				}
-			}()
+			defer func() { fake.lastQueueDone = time.Now() }()
 		case "history":
-			if fake.firstHistory.IsZero() {
-				fake.firstHistory = time.Now()
-			}
+			fake.historyPolls++
+			fake.historyFilters = append(fake.historyFilters, r.URL.Query().Get("nzo_ids"))
 			slots := []map[string]any{}
-			if fake.polls > fake.finishAfter {
+			switch {
+			case fake.historyPolls > fake.finishAfter+fake.postProcess:
 				slots = append(slots, map[string]any{"nzo_id": "SABnzbd_nzo_1", "status": "Completed"})
+			case fake.historyPolls > fake.finishAfter:
+				slots = append(slots, map[string]any{"nzo_id": "SABnzbd_nzo_1", "status": "Extracting"})
 			}
 			body = map[string]any{"history": map[string]any{"slots": slots}}
 		default:
@@ -391,12 +393,13 @@ func (fake *fakeSAB) handler(t *testing.T) http.Handler {
 	})
 }
 
-// SABnzbd shows a job as terminal only in its history, so a history answer
-// without it proves the job was pending when that request started. The
-// terminal lower bound must come from there, not from the slow queue call
-// before it, or every round trip of the queue call counts as uncertainty.
-func TestSABnzbdTerminalBoundStartsAtTheHistoryRequest(t *testing.T) {
-	fake := &fakeSAB{queueDelay: 60 * time.Millisecond, finishAfter: 1}
+// SABnzbd shows a job as terminal only in its history, and never moves a job
+// from history back to the queue. Once history lists the job, the poll must
+// stop asking the slow queue, or every queue round trip lands inside the
+// terminal window: the lower bound has to come from the history request that
+// showed the job still post-processing, after the last queue answer.
+func TestSABnzbdTerminalBoundLeavesTheQueueOutOnceTheJobIsInHistory(t *testing.T) {
+	fake := &fakeSAB{queueDelay: 60 * time.Millisecond, finishAfter: 2, postProcess: 2}
 	server := httptest.NewServer(fake.handler(t))
 	defer server.Close()
 
@@ -410,16 +413,44 @@ func TestSABnzbdTerminalBoundStartsAtTheHistoryRequest(t *testing.T) {
 		t.Fatalf("terminal wait: %v", err)
 	}
 	fake.mu.Lock()
-	queueDone, historyArrived := fake.firstQueueDone, fake.firstHistory
+	queueRequests, lastQueueDone, filters := fake.queueRequests, fake.lastQueueDone, append([]string(nil), fake.historyFilters...)
 	fake.mu.Unlock()
-	if terminal.LowerBound.Before(queueDone) {
-		t.Fatalf("lower bound %v precedes the first queue answer at %v; the queue round trip was counted as uncertainty", terminal.LowerBound, queueDone)
+	if queueRequests != 2 {
+		t.Fatalf("queue asked %d times; want once per poll before history listed the job (2)", queueRequests)
 	}
-	if terminal.LowerBound.After(historyArrived) {
-		t.Fatalf("lower bound %v is later than the history request that showed the job pending (%v)", terminal.LowerBound, historyArrived)
+	if !terminal.LowerBound.After(lastQueueDone) {
+		t.Fatalf("lower bound %v is not after the last queue answer at %v; a queue round trip was counted as uncertainty", terminal.LowerBound, lastQueueDone)
 	}
 	if terminal.ObservedAt.Before(terminal.LowerBound) {
 		t.Fatalf("terminal observation %+v is not ordered", terminal)
+	}
+	for i, filter := range filters {
+		if filter != "SABnzbd_nzo_1" {
+			t.Fatalf("history request %d asked for nzo_ids %q, want only the job being waited on", i+1, filter)
+		}
+	}
+}
+
+// While the job is still downloading, a queue answer listing it proves it was
+// pending after that request started, which is later than the history request
+// before it.
+func TestSABnzbdQueuedJobIsPendingFromTheQueueRequest(t *testing.T) {
+	fake := &fakeSAB{finishAfter: 1}
+	server := httptest.NewServer(fake.handler(t))
+	defer server.Close()
+
+	api, err := NewAPI(benchmark.SABnzbd, server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	observations, err := api.product.observe(context.Background(), []string{"SABnzbd_nzo_1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation := observations["SABnzbd_nzo_1"]
+	if observation.state != jobActive || observation.pendingAt.Before(started) {
+		t.Fatalf("downloading job observed as %+v", observation)
 	}
 }
 

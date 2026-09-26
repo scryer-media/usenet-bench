@@ -362,20 +362,6 @@ func (api *sabAPI) waitComplete(ctx context.Context, nzoID string, interval time
 func (api *sabAPI) observe(ctx context.Context, jobIDs []string) (map[string]jobObservation, error) {
 	wanted := stringSet(jobIDs)
 	observations := make(map[string]jobObservation, len(jobIDs))
-	var queueResponse struct {
-		Queue struct {
-			Slots []map[string]any `json:"slots"`
-		} `json:"queue"`
-	}
-	if err := api.get(ctx, "queue", nil, &queueResponse); err != nil {
-		return nil, fmt.Errorf("observe %s queue: %w", api.productName(), err)
-	}
-	for _, slot := range queueResponse.Queue.Slots {
-		id := fieldString(slot, "nzo_id")
-		if wanted[id] {
-			observations[id] = classifyLiveStatus(fieldString(slot, "status"))
-		}
-	}
 
 	var historyResponse struct {
 		History struct {
@@ -386,12 +372,18 @@ func (api *sabAPI) observe(ctx context.Context, jobIDs []string) (map[string]job
 	if historyLimit < 100 {
 		historyLimit = 100
 	}
-	// SABnzbd lists a job as terminal only in its history. A history answer
-	// without a terminal entry therefore shows the job was not yet terminal
-	// at some instant after this request started, which is a tighter bound
-	// than the start of the queue request before it.
+	// History comes first because SABnzbd lists a job as terminal only
+	// there. Asking for just the jobs being waited on keeps a busy SABnzbd
+	// from building a hundred unrelated rows on every poll; the slots are
+	// still matched here, so an answer that ignores the filter is merely
+	// larger. A history answer without a terminal entry shows the job was
+	// not yet terminal at some instant after this request started.
 	historyRequestedAt := time.Now()
-	if err := api.get(ctx, "history", url.Values{"limit": {strconv.Itoa(historyLimit)}}, &historyResponse); err != nil {
+	historyQuery := url.Values{
+		"limit":   {strconv.Itoa(historyLimit)},
+		"nzo_ids": {strings.Join(jobIDs, ",")},
+	}
+	if err := api.get(ctx, "history", historyQuery, &historyResponse); err != nil {
 		return nil, fmt.Errorf("observe %s history: %w", api.productName(), err)
 	}
 	for _, slot := range historyResponse.History.Slots {
@@ -407,14 +399,41 @@ func (api *sabAPI) observe(ctx context.Context, jobIDs []string) (map[string]job
 		case strings.Contains(normalized, "fail"), strings.Contains(normalized, "delete"), strings.Contains(normalized, "abort"):
 			observations[id] = jobObservation{state: jobFailed, status: status}
 		default:
-			observations[id] = jobObservation{state: jobActive, status: status}
+			observations[id] = jobObservation{state: jobActive, status: status, pendingAt: historyRequestedAt}
 		}
 	}
-	for id, observation := range observations {
-		if observation.state == jobQueued || observation.state == jobActive {
-			observation.pendingAt = historyRequestedAt
-			observations[id] = observation
+	// A job SABnzbd has moved into history never returns to the queue, so
+	// once history lists every job the queue has nothing left to say. Not
+	// asking keeps its round trip out of the terminal window, which is where
+	// a job spends its last polls: post-processing, then complete.
+	if len(observations) == len(wanted) {
+		return observations, nil
+	}
+
+	var queueResponse struct {
+		Queue struct {
+			Slots []map[string]any `json:"slots"`
+		} `json:"queue"`
+	}
+	queueRequestedAt := time.Now()
+	if err := api.get(ctx, "queue", nil, &queueResponse); err != nil {
+		return nil, fmt.Errorf("observe %s queue: %w", api.productName(), err)
+	}
+	for _, slot := range queueResponse.Queue.Slots {
+		id := fieldString(slot, "nzo_id")
+		if !wanted[id] {
+			continue
 		}
+		if _, inHistory := observations[id]; inHistory {
+			continue
+		}
+		observation := classifyLiveStatus(fieldString(slot, "status"))
+		if observation.state == jobQueued || observation.state == jobActive {
+			// Listed in the queue, the job was not terminal when SABnzbd
+			// built this answer, which is after the request started.
+			observation.pendingAt = queueRequestedAt
+		}
+		observations[id] = observation
 	}
 	return observations, nil
 }
