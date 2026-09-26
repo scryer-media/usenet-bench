@@ -18,6 +18,7 @@
       "target": "docker-linux",
       "command": ["/scratch/nntp-bench-bin/clientadapter"],
       "environment": {
+        "CLIENT_POLL_INTERVAL": "50ms",
         "CLIENT_IMAGE": "lscr.io/linuxserver/sabnzbd@sha256:64c4c2b6ed546237451cbfec33aa8bac1396865c1a266dd247c02b36ffe27c62",
         "CLIENT_NETWORK": "nntp-bench_benchmark",
         "CLIENT_PLATFORM": "linux/amd64"
@@ -29,6 +30,7 @@
       "target": "docker-linux",
       "command": ["/scratch/nntp-bench-bin/clientadapter"],
       "environment": {
+        "CLIENT_POLL_INTERVAL": "50ms",
         "CLIENT_IMAGE": "lscr.io/linuxserver/sabnzbd@sha256:64c4c2b6ed546237451cbfec33aa8bac1396865c1a266dd247c02b36ffe27c62",
         "CLIENT_NETWORK": "nntp-bench_benchmark",
         "CLIENT_PLATFORM": "linux/amd64",

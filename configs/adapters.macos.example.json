@@ -23,6 +23,7 @@
         "/scratch/nntp-bench-bin/nativeadapter"
       ],
       "environment": {
+        "NATIVE_POLL_INTERVAL": "50ms",
         "NATIVE_CLIENT_VERSION": "5.0.4",
         "NATIVE_API_ENDPOINT": "http://127.0.0.1:18080",
         "NATIVE_LAUNCH_COMMAND": "[\"/Applications/SABnzbd.app/Contents/MacOS/SABnzbd\",\"--config-file\",\"{{config_dir}}/sabnzbd.ini\",\"--server\",\"127.0.0.1:18080\",\"--browser\",\"0\",\"--console\",\"--new\"]"

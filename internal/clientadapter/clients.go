@@ -52,12 +52,13 @@ const (
 type jobObservation struct {
 	state  jobObservationState
 	status string
-	// pendingAt, when set on a queued or active observation, is a later
-	// instant than the start of the whole observation at which the job was
-	// still not observable as terminal. An observer that makes more than one
-	// request sets it to the start of the request that would have shown the
-	// job terminal, so the terminal lower bound does not also carry the
-	// round trips that came before it.
+	// pendingAt, when set, is a later instant than the start of the whole
+	// observation at which the job was still not observable as terminal. An
+	// observer that makes more than one request sets it to the start of the
+	// request that would have shown the job terminal, so the terminal lower
+	// bound does not also carry the round trips that came before it. On a
+	// terminal observation it is the start of the request, within the same
+	// observation, that still showed the job pending.
 	pendingAt time.Time
 }
 
@@ -67,6 +68,15 @@ func (observation jobObservation) pendingSince(requestStartedAt time.Time) time.
 		return observation.pendingAt
 	}
 	return requestStartedAt
+}
+
+// terminalLowerBound returns the lower bound a terminal observation supports:
+// the previous one, unless this observation itself saw the job pending later.
+func (observation jobObservation) terminalLowerBound(previous time.Time) time.Time {
+	if observation.pendingAt.After(previous) {
+		return observation.pendingAt
+	}
+	return previous
 }
 
 func classifyLiveStatus(status string) jobObservation {
@@ -189,13 +199,13 @@ func (api *API) WaitCompleteWithObservation(ctx context.Context, jobID string, i
 		if found {
 			switch observation.state {
 			case jobComplete:
-				return TerminalObservation{LowerBound: lowerBound, ObservedAt: observedAt}, nil
+				return TerminalObservation{LowerBound: observation.terminalLowerBound(lowerBound), ObservedAt: observedAt}, nil
 			case jobFailed:
 				// The observation is returned alongside the error: the client
 				// reached a terminal state and the timing up to it is real, so
 				// a lane that can record a did-not-finish job has everything
 				// it needs to record one.
-				return TerminalObservation{LowerBound: lowerBound, ObservedAt: observedAt}, &TerminalFailureError{JobID: jobID, Status: observation.status}
+				return TerminalObservation{LowerBound: observation.terminalLowerBound(lowerBound), ObservedAt: observedAt}, &TerminalFailureError{JobID: jobID, Status: observation.status}
 			case jobQueued, jobActive:
 				lowerBound = observation.pendingSince(requestStartedAt)
 			}
@@ -361,8 +371,93 @@ func (api *sabAPI) waitComplete(ctx context.Context, nzoID string, interval time
 
 func (api *sabAPI) observe(ctx context.Context, jobIDs []string) (map[string]jobObservation, error) {
 	wanted := stringSet(jobIDs)
-	observations := make(map[string]jobObservation, len(jobIDs))
+	// History comes first because SABnzbd lists a job as terminal only
+	// there. A history answer without a terminal entry shows the job was
+	// not yet terminal at some instant after this request started.
+	observations, err := api.observeHistory(ctx, jobIDs, wanted)
+	if err != nil {
+		return nil, err
+	}
+	// A job SABnzbd has moved into history never returns to the queue, so
+	// once history lists every job the queue has nothing left to say. Not
+	// asking keeps its round trip out of the terminal window, which is where
+	// a job spends its last polls: post-processing, then complete.
+	if len(observations) == len(wanted) {
+		return observations, nil
+	}
 
+	var queueResponse struct {
+		Queue struct {
+			Slots []map[string]any `json:"slots"`
+		} `json:"queue"`
+	}
+	queueRequestedAt := time.Now()
+	if err := api.get(ctx, "queue", nil, &queueResponse); err != nil {
+		return nil, fmt.Errorf("observe %s queue: %w", api.productName(), err)
+	}
+	var pastDownload []string
+	for _, slot := range queueResponse.Queue.Slots {
+		id := fieldString(slot, "nzo_id")
+		if !wanted[id] {
+			continue
+		}
+		if _, inHistory := observations[id]; inHistory {
+			continue
+		}
+		status := fieldString(slot, "status")
+		observation := classifyLiveStatus(status)
+		if observation.state == jobQueued || observation.state == jobActive {
+			// Listed in the queue, the job was not terminal when SABnzbd
+			// built this answer, which is after the request started.
+			observation.pendingAt = queueRequestedAt
+		}
+		if sabQueueStatusPastDownload(status) {
+			pastDownload = append(pastDownload, id)
+		}
+		observations[id] = observation
+	}
+	if len(pastDownload) == 0 {
+		return observations, nil
+	}
+	// A job the queue shows past its download is about to move to history,
+	// and a post with nothing to unpack gets there before the next poll
+	// with no post-processing row in between: waiting out the poll interval
+	// would put the whole interval and both round trips inside the terminal
+	// window. Ask history again at once instead. A job it now lists as
+	// terminal was pending when the queue request started, and one it lists
+	// post-processing was pending when this request started.
+	rechecked, err := api.observeHistory(ctx, pastDownload, stringSet(pastDownload))
+	if err != nil {
+		return nil, err
+	}
+	for id, observation := range rechecked {
+		if observation.state == jobComplete || observation.state == jobFailed {
+			observation.pendingAt = queueRequestedAt
+		}
+		observations[id] = observation
+	}
+	return observations, nil
+}
+
+// sabQueueStatusPastDownload reports whether a queue status is one SABnzbd
+// shows only after the job's articles are all downloaded: quick-check,
+// verification, repair, unpacking, moving, or the completed-awaiting-history
+// state.
+func sabQueueStatusPastDownload(status string) bool {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "", "QUEUED", "PAUSED", "DOWNLOADING", "FETCHING", "GRABBING", "CHECKING":
+		return false
+	default:
+		return true
+	}
+}
+
+// observeHistory asks SABnzbd's history for the jobs being waited on. Asking
+// for just those keeps a busy SABnzbd from building a hundred unrelated rows
+// on every poll; the slots are still matched here, so an answer that ignores
+// the filter is merely larger.
+func (api *sabAPI) observeHistory(ctx context.Context, jobIDs []string, wanted map[string]bool) (map[string]jobObservation, error) {
+	observations := make(map[string]jobObservation, len(jobIDs))
 	var historyResponse struct {
 		History struct {
 			Slots []map[string]any `json:"slots"`
@@ -372,12 +467,6 @@ func (api *sabAPI) observe(ctx context.Context, jobIDs []string) (map[string]job
 	if historyLimit < 100 {
 		historyLimit = 100
 	}
-	// History comes first because SABnzbd lists a job as terminal only
-	// there. Asking for just the jobs being waited on keeps a busy SABnzbd
-	// from building a hundred unrelated rows on every poll; the slots are
-	// still matched here, so an answer that ignores the filter is merely
-	// larger. A history answer without a terminal entry shows the job was
-	// not yet terminal at some instant after this request started.
 	historyRequestedAt := time.Now()
 	historyQuery := url.Values{
 		"limit":   {strconv.Itoa(historyLimit)},
@@ -401,39 +490,6 @@ func (api *sabAPI) observe(ctx context.Context, jobIDs []string) (map[string]job
 		default:
 			observations[id] = jobObservation{state: jobActive, status: status, pendingAt: historyRequestedAt}
 		}
-	}
-	// A job SABnzbd has moved into history never returns to the queue, so
-	// once history lists every job the queue has nothing left to say. Not
-	// asking keeps its round trip out of the terminal window, which is where
-	// a job spends its last polls: post-processing, then complete.
-	if len(observations) == len(wanted) {
-		return observations, nil
-	}
-
-	var queueResponse struct {
-		Queue struct {
-			Slots []map[string]any `json:"slots"`
-		} `json:"queue"`
-	}
-	queueRequestedAt := time.Now()
-	if err := api.get(ctx, "queue", nil, &queueResponse); err != nil {
-		return nil, fmt.Errorf("observe %s queue: %w", api.productName(), err)
-	}
-	for _, slot := range queueResponse.Queue.Slots {
-		id := fieldString(slot, "nzo_id")
-		if !wanted[id] {
-			continue
-		}
-		if _, inHistory := observations[id]; inHistory {
-			continue
-		}
-		observation := classifyLiveStatus(fieldString(slot, "status"))
-		if observation.state == jobQueued || observation.state == jobActive {
-			// Listed in the queue, the job was not terminal when SABnzbd
-			// built this answer, which is after the request started.
-			observation.pendingAt = queueRequestedAt
-		}
-		observations[id] = observation
 	}
 	return observations, nil
 }

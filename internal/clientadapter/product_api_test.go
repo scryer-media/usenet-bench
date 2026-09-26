@@ -338,17 +338,24 @@ func TestARunningNZBGetIsReady(t *testing.T) {
 // fakeSAB answers SABnzbd's queue and history calls from a script keyed on
 // history requests: for the first finishAfter of them the job is downloading
 // in the queue, for the next postProcess it is in history post-processing, and
-// after that it is complete in history. The queue call is slow, as SABnzbd's
-// is on a busy host.
+// after that it is complete in history. With queueUntil above finishAfter,
+// the queue keeps listing the job as verifying until that many history
+// requests have been made, and history does not list it before then. The
+// queue call is slow, as SABnzbd's is on a busy host.
 type fakeSAB struct {
 	mu            sync.Mutex
 	queueDelay    time.Duration
 	finishAfter   int
 	postProcess   int
+	queueUntil    int
 	historyPolls  int
 	queueRequests int
 	// lastQueueDone is when the latest queue answer was written.
 	lastQueueDone time.Time
+	// queueStarts holds when each queue request reached the server.
+	queueStarts []time.Time
+	// historyDones holds when each history answer was written.
+	historyDones []time.Time
 	// historyFilters holds the nzo_ids filter of every history request.
 	historyFilters []string
 }
@@ -364,11 +371,15 @@ func (fake *fakeSAB) handler(t *testing.T) http.Handler {
 		var body any
 		switch mode := r.URL.Query().Get("mode"); mode {
 		case "queue":
+			fake.queueStarts = append(fake.queueStarts, time.Now())
 			time.Sleep(fake.queueDelay)
 			fake.queueRequests++
 			slots := []map[string]any{}
-			if fake.historyPolls <= fake.finishAfter {
+			switch {
+			case fake.historyPolls <= fake.finishAfter:
 				slots = append(slots, map[string]any{"nzo_id": "SABnzbd_nzo_1", "status": "Downloading"})
+			case fake.historyPolls <= fake.queueUntil:
+				slots = append(slots, map[string]any{"nzo_id": "SABnzbd_nzo_1", "status": "Verifying"})
 			}
 			body = map[string]any{"queue": map[string]any{"slots": slots}}
 			defer func() { fake.lastQueueDone = time.Now() }()
@@ -377,12 +388,14 @@ func (fake *fakeSAB) handler(t *testing.T) http.Handler {
 			fake.historyFilters = append(fake.historyFilters, r.URL.Query().Get("nzo_ids"))
 			slots := []map[string]any{}
 			switch {
+			case fake.historyPolls <= fake.queueUntil:
 			case fake.historyPolls > fake.finishAfter+fake.postProcess:
 				slots = append(slots, map[string]any{"nzo_id": "SABnzbd_nzo_1", "status": "Completed"})
 			case fake.historyPolls > fake.finishAfter:
 				slots = append(slots, map[string]any{"nzo_id": "SABnzbd_nzo_1", "status": "Extracting"})
 			}
 			body = map[string]any{"history": map[string]any{"slots": slots}}
+			defer func() { fake.historyDones = append(fake.historyDones, time.Now()) }()
 		default:
 			t.Errorf("unexpected SABnzbd API mode %q", mode)
 			w.WriteHeader(http.StatusBadRequest)
@@ -428,6 +441,43 @@ func TestSABnzbdTerminalBoundLeavesTheQueueOutOnceTheJobIsInHistory(t *testing.T
 		if filter != "SABnzbd_nzo_1" {
 			t.Fatalf("history request %d asked for nzo_ids %q, want only the job being waited on", i+1, filter)
 		}
+	}
+}
+
+// A post with nothing to unpack leaves SABnzbd's queue and lands in history
+// already complete between two polls, with no post-processing row to bound
+// the terminal from. Once the queue shows the job past its download, the poll
+// must ask history again at once rather than wait out the interval, and the
+// terminal lower bound is that queue request, not the poll before it.
+func TestSABnzbdPastDownloadInTheQueueAsksHistoryAtOnce(t *testing.T) {
+	fake := &fakeSAB{queueDelay: 20 * time.Millisecond, queueUntil: 1}
+	server := httptest.NewServer(fake.handler(t))
+	defer server.Close()
+
+	api, err := NewAPI(benchmark.SABnzbd, server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	submitted := time.Now()
+	terminal, err := api.WaitCompleteWithObservation(context.Background(), "SABnzbd_nzo_1", time.Hour, submitted)
+	if err != nil {
+		t.Fatalf("terminal wait: %v", err)
+	}
+	fake.mu.Lock()
+	historyPolls, queueRequests := fake.historyPolls, fake.queueRequests
+	queueStarts, historyDones := append([]time.Time(nil), fake.queueStarts...), append([]time.Time(nil), fake.historyDones...)
+	fake.mu.Unlock()
+	// One poll: history (empty), queue (verifying), then history again
+	// (complete) at once, without a second poll, which the hour-long
+	// interval would never have delivered.
+	if historyPolls != 2 || queueRequests != 1 {
+		t.Fatalf("history asked %d times and queue %d times; want 2 and 1", historyPolls, queueRequests)
+	}
+	if !terminal.LowerBound.After(historyDones[0]) || terminal.LowerBound.After(queueStarts[0]) {
+		t.Fatalf("lower bound %v is not the start of the queue request that showed the job verifying (history answered %v, queue request reached the server %v)", terminal.LowerBound, historyDones[0], queueStarts[0])
+	}
+	if terminal.ObservedAt.Before(terminal.LowerBound) {
+		t.Fatalf("terminal observation %+v is not ordered", terminal)
 	}
 }
 

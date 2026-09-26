@@ -23,6 +23,7 @@
         "C:\\bench\\bin\\nativeadapter.exe"
       ],
       "environment": {
+        "NATIVE_POLL_INTERVAL": "50ms",
         "NATIVE_CLIENT_VERSION": "REPLACE_WITH_SABNZBD_VERSION",
         "NATIVE_API_ENDPOINT": "http://127.0.0.1:18080",
         "NATIVE_LAUNCH_COMMAND": "[\"C:\\\\path\\\\to\\\\SABnzbd-console.exe\",\"--config-file\",\"{{config_dir}}\\\\sabnzbd.ini\",\"--server\",\"127.0.0.1:18080\",\"--browser\",\"0\",\"--console\",\"--new\"]"

@@ -432,6 +432,7 @@ func monitorQueue(
 					job.lastObservedAt = observation.pendingSince(requestStartedAt)
 					job.lastStatus = observation.status
 				case jobComplete:
+					job.lastObservedAt = observation.terminalLowerBound(job.lastObservedAt)
 					job.result.TerminalStatus = "succeeded"
 					job.result.CompletionAt = observedAt
 					job.result.TerminalObservationLowerBound = job.lastObservedAt
@@ -443,6 +444,7 @@ func monitorQueue(
 					job.complete = true
 					completed++
 				case jobFailed:
+					job.lastObservedAt = observation.terminalLowerBound(job.lastObservedAt)
 					job.result.TerminalStatus = "failed"
 					job.result.TerminalError = observation.status
 					job.result.CompletionAt = observedAt
