@@ -132,7 +132,7 @@ lists every subcommand; `-h` on any of them prints its options.
 | `configs/server/compose-nfs.example.yml` | The throttled NFS export used by the `nfs-*` storage profiles |
 | `configs/server/compose-seeded.example.yml` | Overlay that starts the NNTP server from a pre-seeded corpus image |
 | `configs/chains/*.example.json` | Whole-session descriptions: `latency-series` on the Docker stack, `raw-native` on the raw one |
-| `docker/` | Dockerfiles for the pinned RARLAB writers, the official 7-Zip build, the GNU / Info-ZIP distribution writers, the UUDeview encoder and decoder, `par2cmdline-turbo`, the official PAR3 reference `par3cmdline`, Nyuu, the shaper and the throttled NFS server |
+| `docker/` | Dockerfiles for the pinned RARLAB writers, the official 7-Zip build, the GNU / Info-ZIP distribution writers, the UUDeview encoder and decoder, `par2cmdline-turbo`, the pinned rarpar release that writes PAR3, the official PAR3 reference `par3cmdline` for the embedded lane, Nyuu, the shaper and the throttled NFS server |
 | `fixtures/matrix.json`, `fixtures/corpus.json` | The declared fixture matrix and corpus description |
 | `internal/` | The Go packages behind the commands |
 
@@ -144,8 +144,8 @@ summary:
 
 | Class | What it stands for | Sets |
 | --- | --- | --- |
-| `headline` | The common shape of a real post: a stored (`-m0`), multi-volume RAR of already-compressed media. One clean set per source-locked RARLAB writer era (3.93, 4.20, 5.00, 6.24, 7.23), each posted clear, with encrypted headers (`-hp`) and with data-only encryption (`-p`), because most real posts are not encrypted and the encrypted forms are measured beside the clear one, never instead of it. PAR2 repair is part of the common case too: the stored form from the 4.20, 5.00 and 7.23 writers is posted in the same three forms with light damage (`par2-light`) and with an interior volume listed in the NZB but never posted (`par2-heavy-withheld`). | 8 sets, 33 fixtures |
-| `breadth` | Shapes a client meets less often and must still handle: a four-movie stored set with RAR5 quick-open records, the official 7-Zip 7z container, a stored Blu-ray-shaped topology in scattered NZB order, PAR2 over 7z, RAR recovery volumes, the container families that are not RAR (`.tar`, `.tar.gz`, `.tar.xz`, a bare `.xz`, Info-ZIP and 7-Zip zips including a spanned set, ZipCrypto and AES, zip64 and a zip written into a pipe), the 7z codec family (LZMA, LZMA2 solid and non-solid, PPMd, BZip2, data- and header-encrypted), RAR4 and RAR5 compression, `.sfv` sidecars, a raw media file posted with no container at all, one uuencoded post, five PAR3 repair lanes, and paired PAR2 and PAR3 lanes over scattered article loss. | 39 sets, 46 fixtures |
+| `headline` | The common shape of a real post: a stored (`-m0`), multi-volume RAR of already-compressed media. One clean set per source-locked RARLAB writer era (3.93, 4.20, 5.00, 6.24, 7.23), each posted clear, with encrypted headers (`-hp`) and with data-only encryption (`-p`), because most real posts are not encrypted and the encrypted forms are measured beside the clear one, never instead of it. PAR2 repair is part of the common case too, in the shapes real posts carry: each headline PAR2 set copies one observed post from the PAR2 census of 2026-10-13 (payload size, slice size, recovery block count and article size; see [Real recovery shapes](#real-recovery-shapes)). Four are a single bare media file, which is what 92 % of that census is, and the stored RAR form from the 4.20, 5.00 and 7.23 writers copies the median RAR post in the same three forms. They are damaged by articles the server refuses (`par2-articles-light`, `par2-articles-heavy`) or, for the RAR sets, by an interior volume listed in the NZB but never posted (`par2-heavy-withheld`). | 12 sets, 41 fixtures |
+| `breadth` | Shapes a client meets less often and must still handle: a four-movie stored set with RAR5 quick-open records, the official 7-Zip 7z container, a stored Blu-ray-shaped topology in scattered NZB order, a twelve-file bare media post under one PAR2 set, PAR2 over 7z, RAR recovery volumes, RAR recovery records, ten nested-container posts two to five containers deep, the container families that are not RAR (`.tar`, `.tar.gz`, `.tar.xz`, a bare `.xz`, Info-ZIP and 7-Zip zips including a spanned set, ZipCrypto and AES, zip64 and a zip written into a pipe), the 7z codec family (LZMA, LZMA2 solid and non-solid, PPMd, BZip2, data- and header-encrypted), RAR4 and RAR5 compression, `.sfv` sidecars, a raw media file posted with no container at all, one uuencoded post, six PAR3 repair lanes, and paired PAR2 and PAR3 lanes over scattered article loss. | 52 sets, 59 fixtures |
 
 The summarizer pools per-fixture results only within a class (see
 [Summarize](#7-summarize)); the headline aggregate is the figure for the common
@@ -158,7 +158,9 @@ generator refuses to write a smaller one and the controller refuses to run it,
 because a smaller download finishes inside the clients' start-up and settle
 time and the comparison would measure process launch rather than the
 pipeline. Ordinary incompressible cases contain one 150 MiB synthetic video
-file split into 32 MiB archive volumes (the withheld-volume sets post one
+file split into 32 MiB archive volumes; the repair sets that declare a real
+post's size instead are listed under [Real recovery shapes](#real-recovery-shapes)
+(the withheld-volume sets post one
 volume fewer than they list, which is what the floor's headroom is for); the
 multi-input cases contain four 40 MiB videos. Compressible cases contain one
 270 MiB raw-video file carrying
@@ -335,11 +337,66 @@ assumed: a client that cannot open one of these archives produces no payload,
 fails output verification, and is recorded as a DNF with the fixture named,
 the same as any other lane it cannot finish.
 
-One lane nests containers: `rar5-7-tarxz-…` writes a `.tar.xz` and then stores
+The simplest nested lane, `rar5-7-tarxz-…`, writes a `.tar.xz` and then stores
 it in a multi-volume RAR5 set, which is how a large source tree is actually
 posted. The manifest records the inner container under `inner_archive`, and
 the expected output is the media payload, so a client that stops after
 unpacking the RAR has not finished the fixture.
+
+Ten more lanes nest deeper, to load a client's unpack graph. Each declares a `nested` chain, innermost container
+first, layers separated by `>`; a layer is
+`format:compression[:volume][*archives][+par2]`, and the posted RAR5 set is the
+outermost container on top of the chain.
+
+Two containers deep (`nested-2deep-*`):
+
+| Set | Containers | Chain, innermost first | Payload files | Posted set |
+| --- | --- | --- | --- | --- |
+| `nested-2deep-01` | 2 | `rar5:store:15m` | 1 | stored |
+| `nested-2deep-02` | 2 | `7z:normal` | 1 | stored |
+
+Three containers deep (`nested-3deep-*`):
+
+| Set | Containers | Chain, innermost first | Payload files | Posted set |
+| --- | --- | --- | --- | --- |
+| `nested-3deep-01` | 3 | `7z:normal > zip:store` | 1 | stored |
+| `nested-3deep-02` | 3 | `rar5:store:15m > rar5:store:20m` | 1 | stored |
+
+Five containers deep (`nested-5deep-*`):
+
+| Set | Containers | Chain, innermost first | Payload files | Posted set |
+| --- | --- | --- | --- | --- |
+| `nested-5deep-01` | 5 | `tar:xz > zip:store > 7z:store > rar5:normal` | 1 | stored |
+| `nested-5deep-02` | 5 | `rar5:store:10m > rar5:store:15m > rar5:store:20m > rar5:store:25m` | 1 | stored |
+
+Broad: sibling archives at one or more levels (`nested-broad-*`):
+
+| Set | Containers | Chain, innermost first | Payload files | Posted set |
+| --- | --- | --- | --- | --- |
+| `nested-broad-01` | 2 | `rar5:store*8` | 8 | stored |
+| `nested-broad-02` | 3 | `zip:deflate*6 > 7z:store*3` | 12 | stored |
+
+Stored and compressed layers alternating, so a reader switches between copying members out and decoding them (`nested-chase-*`):
+
+| Set | Containers | Chain, innermost first | Payload files | Posted set |
+| --- | --- | --- | --- | --- |
+| `nested-chase-01` | 4 | `zip:deflate > rar5:store:20m > 7z:normal` | 1 | stored |
+
+Repair inside the nesting: an inner PAR2 set with one damaged file, reachable only after the unpack above it (`nested-repair-*`):
+
+| Set | Containers | Chain, innermost first | Payload files | Posted set |
+| --- | --- | --- | --- | --- |
+| `nested-repair-01` | 2 | `rar5:store:15m+par2` | 1 | stored, par2-articles-light |
+
+All ten carry the median RAR post's payload size and 30 MiB volumes, but the
+nesting itself is not a census shape: the census reads NZBs and PAR2 packets
+and cannot see inside a volume. They are stress shapes. The expected output is
+the media payload, so a client that stops at any inner container has not
+finished, and no client is excluded from them. The generator proves each chain
+from the posted bytes: it extracts the outer set, then repairs and extracts
+every layer with that layer's pinned reader, and checks the payload digests. A
+nested layer's PAR2 files are recorded in the manifest and may be retained in
+a client's output like any other recovery material.
 
 `tar --create` occasionally exits 1 with `file changed as we read it` when the
 payload was written to a bind-mounted directory moments earlier. The generator
@@ -356,7 +413,8 @@ read back with Info-ZIP `unzip`, and the zip64 and streamed lanes with both
 pinned readers. Spanned and AES zips are read back with the pinned 7-Zip: Info-ZIP's own `zip -s-` rejoin silently truncates a set of three
 or more parts and prompts for each disk, which cannot run unattended, while
 7-Zip opens the `.z01`/`.zip` set natively. The `media` lanes are hashed
-directly. The nested lane is unpacked twice, outer then inner.
+directly. The `rar5-7-tarxz` lane is unpacked twice, outer then inner; the
+`nested-*` lanes are unpacked once per container.
 
 No client gets a fixture-specific fast path for any of this. The expected
 output of every lane is the media payload, and a client that cannot reach it
@@ -451,18 +509,78 @@ the withheld form, which is what an incomplete post looks like on a server:
 | --- | --- | --- |
 | `par2-light` | PAR2 at 10 % redundancy | 128 deterministic byte flips in one non-leading volume |
 | `par2-heavy` | PAR2 at 35 % redundancy | one complete non-leading volume absent from the NZB |
-| `par2-heavy-withheld` | PAR2 at 35 % redundancy | one non-leading volume listed in the NZB but never posted |
-| `rar-recovery-volume-light` | one RAR recovery volume | one non-leading volume absent |
-| `rar-recovery-volume-heavy` | two RAR recovery volumes | two non-leading volumes absent |
-| `par3-light` | PAR3 (Cauchy) at 10 % redundancy, 1 MiB blocks | 128 deterministic byte flips in one non-leading file |
-| `par3-heavy-withheld` | PAR3 (Cauchy) at 35 % redundancy, 1 MiB blocks | one non-leading file listed in the NZB but never posted |
-| `par3-fft-heavy-withheld` | PAR3 (FFT Reed-Solomon) at 35 % redundancy, 1 MiB blocks | one non-leading file withheld and 128 byte flips in another |
-| `par3-inside-light` | PAR3 packets embedded in the zip or 7z itself at 10 % redundancy | 128 byte flips at each of three quarter points of the member data |
+| `par2-heavy-withheld` | PAR2 at 35 % redundancy, or the set's `recovery_shape` | one non-leading volume listed in the NZB but never posted |
+| `par2-articles-light` | PAR2 in the set's `recovery_shape` | whole articles, spread evenly, listed but never posted: as many as damage at most five slices |
+| `par2-articles-heavy` | PAR2 in the set's `recovery_shape` | whole articles, spread evenly, listed but never posted: as many as damage at most nine tenths of the recovery blocks |
+| `rar-recovery-volume-light` | one RAR recovery volume, or the borrowed PAR2 shape's redundancy in whole volumes | as many non-leading volumes absent as recovery volumes posted |
+| `rar-recovery-volume-heavy` | twice the light count | as many non-leading volumes absent as recovery volumes posted |
+| `rar-recovery-record-light` | a recovery record inside every RAR volume, sized to the borrowed PAR2 shape's redundancy | the articles the light PAR2 lane of the same shape loses |
+| `par3-light` | PAR3 (FFT Reed-Solomon) at 10 % redundancy in 1 MiB blocks, or the set's `recovery_shape` | 128 deterministic byte flips in one non-leading file |
+| `par3-heavy-withheld` | PAR3 (FFT Reed-Solomon) at 35 % redundancy in 1 MiB blocks, or the set's `recovery_shape` | one non-leading file listed in the NZB but never posted |
+| `par3-fft-heavy-withheld` | PAR3 (FFT Reed-Solomon) at 35 % redundancy in 1 MiB blocks, or the set's `recovery_shape` | one non-leading file withheld and 128 byte flips in another |
+| `par3-articles-light` | PAR3 (FFT Reed-Solomon) in the set's `recovery_shape` | the same articles as `par2-articles-light` over the same shape |
+| `par3-fft-articles-heavy` | PAR3 (FFT Reed-Solomon) in the set's `recovery_shape` | the same articles as `par2-articles-heavy` over the same shape |
+| `par3-inside-light` | PAR3 packets embedded in the zip or 7z itself by the `par3cmdline` reference at 10 % redundancy, in the code that tool picks | 128 byte flips at each of three quarter points of the member data |
 | `par2-scattered-light` | PAR2 at 5 % redundancy, one 750 KiB block per article | 1 % of the articles, spread evenly, listed in the NZB but never posted |
 | `par2-scattered-heavy` | PAR2 at 10 % redundancy, one 750 KiB block per article | 7 % of the articles, spread evenly, listed but never posted |
 | `par3-fft-scattered-light` | PAR3 (FFT Reed-Solomon) at 5 % redundancy, one 750 KiB block per article | the same articles as `par2-scattered-light` |
 | `par3-fft-scattered-heavy` | PAR3 (FFT Reed-Solomon) at 10 % redundancy, one 750 KiB block per article | the same articles as `par2-scattered-heavy` |
 | `par3-fft-past-par2-cap` | PAR3 (FFT Reed-Solomon, two interleaved cohorts) at 10 % redundancy, one 750 KiB block per article, over a post with more articles than PAR2's 32,768-block limit | 7 % of the articles, spread evenly, listed but never posted |
+
+### Real recovery shapes
+
+A set that declares `recovery_shape` writes its PAR2 or PAR3 with that slice
+size and that many recovery blocks (`par2 create -s -c`, `par3 create -s -c`)
+instead of the fixed 1 MiB slices and a percentage. Every shape in the matrix is one observed post: the post
+nearest the median size of its group in the PAR2 census of 2026-10-13 (546
+posts, 476 with parsed PAR2). No release name is recorded, only the numbers.
+
+| Set | Payload | Slice bytes | Source slices | Recovery blocks | Article bytes | Share of the census |
+| --- | --- | --- | --- | --- | --- | --- |
+| `repair-media-par2-coarse` | one file, 5,286,313,396 bytes | 2,643,160 | 2000 | 40 (2 %) | 716800 | 155 posts |
+| `repair-media-par2-4m` | one file, 1,449,401,321 bytes | 4,194,304 | 346 | 35 (10 %) | 640000 | 149 posts |
+| `repair-media-par2-10m` | one file, 1,844,447,449 bytes | 10,000,000 | 185 | 37 (20 %) | 716800 | 96 posts |
+| `repair-media-par2-fine` | one file, 738,132,446 bytes | 369,024 | 2001 | 192 (9.6 %) | 768000 | 39 posts |
+| `repair-media-par2-batch` | twelve files, 17.4 GB | 4,480,000 | 3893 | 390 (10 %) | 640000 | 39 posts |
+| `repair-rar*-store-par2` | thirteen 30 MiB RAR volumes, 391 MB | 195,596 | 2000 | 167 (8.4 %) | 716800 | the median RAR post |
+
+What the shapes do not copy: the payload is rendered video of about the stated
+size, so the source slice count lands within a few of the real one; all PAR2
+is written by par2cmdline-turbo, whatever tool wrote the original, and the
+recovery files are sized the way that tool sizes them; and the amount of
+damage is not measured. The census recorded what posters wrote, not what
+servers later lost, so `par2-articles-light` and `par2-articles-heavy` are a
+small repair and a near-capacity repair, not loss rates.
+
+The lost articles are whole articles of the set's own article size, so an
+article-loss fixture can only be seeded at that size; a seed at any other is
+refused.
+
+The census holds no PAR3 post, no 7z or zip post and no RAR recovery volume,
+so those lanes borrow the real PAR2 shapes rather than keep invented ones:
+
+| Set | Borrowed shape | What is copied |
+| --- | --- | --- |
+| `repair-rar5-7-store-par3`, `-par3-headers` | `repair-rar*-store-par2` | payload, 30 MiB volumes, block size, recovery block count, article size |
+| `repair-media-par3-fft` | `repair-media-par2-4m` | payload, block size, recovery block count, article size |
+| `repair-media-par3-fft-batch` | `repair-media-par2-batch` | twelve files, block size, recovery block count |
+| `repair-sevenzip-store-par2` | `repair-rar*-store-par2` | payload, 30 MiB volumes, slice size, recovery block count, article size |
+| `repair-rar4-store-recovery`, `repair-rar5-store-recovery` | `repair-rar*-store-par2` | payload, 30 MiB volumes and redundancy: that post's 8.4 % of PAR2 over thirteen volumes rounds to one recovery volume (7.7 %) for light; heavy is twice that, two (15 %), inside the 23 % the census never exceeds |
+| `repair-rar4-store-rr`, `repair-rar5-store-rr` | `repair-rar*-store-par2` | payload, 30 MiB volumes, article size and redundancy: that post's 8.4 % of PAR2 becomes an 8 % recovery record (`-rr8p`) in every volume, and the lane loses the same articles as the light PAR2 lane |
+
+A PAR3 article-loss lane and the PAR2 lane of the same shape and severity lose
+articles at the same positions, so the pair differs only in the parity format.
+No post in the census carries a `.rev` file (0 of 546), and RAR recovery
+records live inside the volumes, where a census of NZBs and PAR2 packets
+cannot see them. So the census has no figure for either RAR recovery kind, and
+both borrow the median RAR post's PAR2 shape: the recovery-volume count and
+the recovery-record percentage are computed from its recovery blocks over its
+slices, never picked for the fixture. The recovery-record lanes run in the
+700k phases with SABnzbd, NZBGet and nzbfast excluded as expected did-not-finish; that
+exclusion is an expectation, not a measured run.
+The scattered and past-cap lanes stay synthetic on purpose: one block per
+article was seen in 4 of 476 posts and no post exceeds PAR2's block limit, so
+they measure a regime PAR3 was designed for, not a post that exists today.
 
 `par2-heavy` and `par2-heavy-withheld` describe the same missing data from two
 different client viewpoints. Under `par2-heavy` the NZB never mentions the
@@ -474,15 +592,16 @@ bytes stay on disk in the fixture so the repair target is still auditable; the
 manifest records them under `withheld_files` and the fault as
 `kind: "withheld-volume"`.
 
-Five PAR3 lanes, all breadth, cover the PAR3 flows a downloader meets first
-rather than the whole specification: `par3-light` and `par3-heavy-withheld`
-over the stored RAR5 7.23 set, the withheld lane again over encrypted headers,
-`par3-fft-heavy-withheld` over four bare media files posted in scattered order,
-and `par3-inside-light` over an Info-ZIP stored zip. The light and withheld
-recipes are the PAR2 ones, so a PAR3 lane and its PAR2 sibling differ only in
-the parity format. Neither SABnzbd nor NZBGet reads PAR3, so these lanes are
+Six PAR3 lanes, all breadth, cover the PAR3 flows a downloader meets first
+rather than the whole specification: `par3-articles-light` and
+`par3-heavy-withheld` over the stored RAR5 7.23 set, the withheld lane again
+over encrypted headers, `par3-articles-light` and `par3-fft-articles-heavy`
+over one bare media file, and `par3-fft-heavy-withheld` over twelve bare media
+files posted in scattered order. Each takes its size and geometry from a real PAR2 post, so a PAR3
+lane and its PAR2 sibling differ only in the parity format. None of SABnzbd, NZBGet and nzbfast reads PAR3, so these lanes are
 compared release over release, never against an oracle. They mimic PAR2 in a
-new packaging and are kept as regression controls.
+new packaging and are kept as regression controls. The example chain does not
+schedule them.
 
 The four scattered lanes are the ones where the parity format itself should
 matter. One 8 GiB stored RAR5 set is posted at 750 KiB articles, and each lane
@@ -512,9 +631,9 @@ count exactly from the withheld offsets at PAR2's smallest legal block size
 (PAR2 repairs only with at least as many recovery blocks as damaged blocks),
 refuses the fixture if PAR2 could repair it, and records the comparison in
 `repair.par3.par2_at_limit`; then it creates the PAR3 set and repairs a
-blanked copy with the reference as usual. The set is also split into two
-interleaved FFT cohorts (`-i1`), which the reference does unprompted only
-above 65,536 blocks, so the lane exercises per-cohort recovery accounting.
+blanked copy as usual. The set is also split into two
+interleaved FFT cohorts (`--interleave 1`), which one cohort does not need
+below 65,536 blocks, so the lane exercises per-cohort recovery accounting.
 A reduced-size local run cannot build this lane: shrinking the payload puts
 the post back under PAR2's limit and the generator refuses it. The lane runs
 in its own weaver-only phase, `B3-par3-past-cap-rtt10`, because a run needs
@@ -524,13 +643,26 @@ withheld article is recorded in `repair.corruptions` as
 `kind: "withheld-article"` with its raw byte offset and length; the seeder
 rewrites exactly those segments to never-posted message-ids and refuses any
 other article size. Generation zeroes those ranges in a verification copy and
-repairs it with the reference tool before the fixture is accepted. The
-scattered lanes run in the weaver-only chain phase `B3-par3-scale-rtt10`. PAR3 material comes from the official
-`par3cmdline` reference built from one pinned source revision; it runs inside
-the archive folder so every file is recorded by its flat posted name, and the
-manifest's `repair.par3` records the reference build and the exact creation
-arguments. The repair-then-read-back acceptance described next applies too, with `par3
-repair` (or `par3 rs` for the embedded lane, read back with 7-Zip).
+repairs it before the fixture is accepted. The
+scattered lanes run in the weaver-only chain phase `B3-par3-scale-rtt10`.
+
+Every standalone PAR3 set is written by one published
+[rarpar](https://github.com/scryer-media/rarpar) release, pinned by asset URL
+and digest in `docker/rarpar/toolchain.json` (0.9.4), never a source build:
+`rarpar par3 create --codec fft --capacity-log2 K --block-size N` with
+`--recovery-count` for a set with a `recovery_shape` and `--recovery-percent`
+otherwise. Every one uses the FFT Reed-Solomon code; none is Cauchy. `K` is
+the smallest exponent whose power of two holds one cohort's recovery blocks
+(167 blocks declare 2^8), computed from the post because it is part of the
+set's identity. rarpar runs inside the archive folder so every file is
+recorded by its flat posted name, and the manifest's `repair.par3` records
+the build and the exact creation arguments. The embedded profile is the one
+exception: rarpar embeds PAR3 only in an archive it writes itself, and only
+with the Cauchy code, so `par3-inside-light` is still written by the official
+`par3cmdline` reference built from one pinned source revision. The checked-in
+matrix carries no lane for that profile. The
+repair-then-read-back acceptance described next applies too, with `rarpar par3
+repair` (or the reference's `par3 rs` for the embedded lane, read back with 7-Zip).
 
 PAR2 material comes from the pinned `par2cmdline-turbo` 1.4.0 image. Before a
 repair fixture is accepted the generator copies its posted input aside —
@@ -590,22 +722,22 @@ round trip:
 
 | Id | Decoded bytes per article | What it stands for |
 | --- | --- | --- |
-| `750k` (default) | 768000 | what current posting tools default to |
-| `384k` | 393216 | the realistic lower bound: what a poster configured for 3000 yEnc lines emits, which was the common default before the size crept up, and what a backfill of older posts still hands a client |
+| `700k` | 716800 | Nyuu's default and the size of 280 of the 476 posts in the PAR2 census of 2026-10-13: the size a series seeds its main corpus at |
+| `625k` | 640000 | 140 of the 476, all from one posting pipeline |
+| `750k` (default) | 768000 | 50 of the 476 |
+| `384k` | 393216 | what a poster configured for 3000 yEnc lines emits; no post in the census is at it, so it stands for old backfill only and no shipped series uses it |
 
-At `384k` a fixture posts roughly twice as many articles for the same bytes,
-which is the point: the per-article cost that `750k` hides is what this
-stratum exposes. The corpus makes **no claim** about how Usenet's articles are
-distributed between the two — `384k` is in the matrix because it is a size
-real posts are at and the smallest that is still common, not because some
-share of posts are at it. Sizes are named rather than free-form: an arbitrary
-byte count would multiply the strata without adding a shape any real post has,
-and each one needs its own seeded corpus.
+The shipped series measures at `700k`, repeats a phase at `625k`, and runs the
+one PAR2 shape that was posted at `750k` at `750k`. Sizes are named rather
+than free-form: an arbitrary byte count would multiply the strata without
+adding a shape any real post has, and each one needs its own seeded corpus.
+`750k` stays the default only because every plan written before article size
+was recorded was seeded at it.
 
 `--article-size` is on `seed`, `plan` and `seed-image`; `--segment-bytes`
 still exists and must agree with it. The profile travels from the plan into
 every run artifact and adapter result as `article_profile`, and into the
-summarizer's pairing key, so a `750k` block and a `384k` block are never
+summarizer's pairing key, so a `700k` block and a `625k` block are never
 paired. A plan that does not mention article size resolves to `750k`, which is
 what every plan written before the stratum existed meant, so an old plan keeps
 producing the same comparison.
@@ -898,7 +1030,7 @@ and its CA) and writes its own plan and artifact root:
 
 ```bash
 SWEEP_FIXTURES=direct-mkv,rar5-7-store-store-nonsolid-none-incompressible,\
-repair-rar5-7-store-par2-par2-light-store-nonsolid-none-incompressible,\
+repair-rar5-7-store-par2-par2-articles-light-store-nonsolid-none-incompressible,\
 repair-rar5-7-store-par2-par2-heavy-withheld-store-nonsolid-none-incompressible
 for rtt in 50ms 100ms 250ms; do
   go run ./cmd/nntpbench server-env --server-link 1gbit --server-rtt $rtt \
@@ -1536,8 +1668,8 @@ relative path in a chain description resolves against the description's own
 directory, so a chain, its plans and its corpus move between machines as one
 unit. It carries two phases for the additions above: `B3-breadth-rtt10`
 measures the container and compression lanes over the `breadth-formats`
-corpus, and `B3-384k-rtt10` repeats a phase at the smaller article size
-against a corpus seeded for it.
+corpus, and `B3-625k-rtt10` and `B3-750k-rtt10` measure at the two other article
+sizes real posts use, each against a corpus seeded for it.
 
 A chain drives one of two server-side arrangements, named by `stack`. The
 default, `docker`, is the Compose topology above. `raw` runs the same server

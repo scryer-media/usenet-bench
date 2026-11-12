@@ -51,16 +51,22 @@
       "sevenzip-store-store-nonsolid-none-incompressible",
       "sevenzip-headers-store-nonsolid-headers-incompressible",
       "sevenzip-lzma2-normal-solid-none-compressible",
-      "repair-rar4-par2-par2-light-normal-solid-none-incompressible",
-      "repair-rar5-par2-par2-heavy-normal-solid-data-incompressible",
       "repair-rar4-393-recovery-rar-recovery-volume-light-normal-nonsolid-none-incompressible",
       "repair-rar5-recovery-rar-recovery-volume-heavy-normal-solid-headers-incompressible",
-      "repair-rar5-store-par2-par2-light-store-nonsolid-none-incompressible",
-      "repair-rar5-store-withheld-par2-heavy-withheld-store-nonsolid-headers-incompressible",
       "repair-rar4-store-recovery-rar-recovery-volume-light-store-nonsolid-none-incompressible",
       "repair-rar5-store-recovery-rar-recovery-volume-heavy-store-nonsolid-none-incompressible",
-      "repair-sevenzip-store-par2-par2-light-store-nonsolid-none-incompressible",
-      "repair-sevenzip-lzma2-par2-par2-heavy-normal-solid-none-incompressible",
+      "repair-rar4-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+      "repair-rar5-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+      "repair-rar4-store-par2-par2-articles-light-store-nonsolid-none-incompressible",
+      "repair-rar4-store-par2-par2-heavy-withheld-store-nonsolid-none-incompressible",
+      "repair-rar5-5-store-par2-par2-articles-light-store-nonsolid-none-incompressible",
+      "repair-rar5-5-store-par2-par2-heavy-withheld-store-nonsolid-none-incompressible",
+      "repair-rar5-7-store-par2-par2-articles-light-store-nonsolid-none-incompressible",
+      "repair-rar5-7-store-par2-par2-heavy-withheld-store-nonsolid-none-incompressible",
+      "repair-media-par2-coarse-par2-articles-light-store-nonsolid-none-incompressible",
+      "repair-media-par2-coarse-par2-articles-heavy-store-nonsolid-none-incompressible",
+      "repair-media-par2-10m-par2-articles-light-store-nonsolid-none-incompressible",
+      "repair-media-par2-10m-par2-articles-heavy-store-nonsolid-none-incompressible",
       "direct-mkv-200mb"
     ],
     "par3-scale": [
@@ -89,21 +95,21 @@
       "rar5-7-store-store-nonsolid-none-incompressible",
       "rar5-7-store-store-nonsolid-headers-incompressible",
       "rar5-7-store-store-nonsolid-data-incompressible",
-      "repair-rar4-store-par2-par2-light-store-nonsolid-none-incompressible",
-      "repair-rar4-store-par2-par2-light-store-nonsolid-headers-incompressible",
-      "repair-rar4-store-par2-par2-light-store-nonsolid-data-incompressible",
+      "repair-rar4-store-par2-par2-articles-light-store-nonsolid-none-incompressible",
+      "repair-rar4-store-par2-par2-articles-light-store-nonsolid-headers-incompressible",
+      "repair-rar4-store-par2-par2-articles-light-store-nonsolid-data-incompressible",
       "repair-rar4-store-par2-par2-heavy-withheld-store-nonsolid-none-incompressible",
       "repair-rar4-store-par2-par2-heavy-withheld-store-nonsolid-headers-incompressible",
       "repair-rar4-store-par2-par2-heavy-withheld-store-nonsolid-data-incompressible",
-      "repair-rar5-5-store-par2-par2-light-store-nonsolid-none-incompressible",
-      "repair-rar5-5-store-par2-par2-light-store-nonsolid-headers-incompressible",
-      "repair-rar5-5-store-par2-par2-light-store-nonsolid-data-incompressible",
+      "repair-rar5-5-store-par2-par2-articles-light-store-nonsolid-none-incompressible",
+      "repair-rar5-5-store-par2-par2-articles-light-store-nonsolid-headers-incompressible",
+      "repair-rar5-5-store-par2-par2-articles-light-store-nonsolid-data-incompressible",
       "repair-rar5-5-store-par2-par2-heavy-withheld-store-nonsolid-none-incompressible",
       "repair-rar5-5-store-par2-par2-heavy-withheld-store-nonsolid-headers-incompressible",
       "repair-rar5-5-store-par2-par2-heavy-withheld-store-nonsolid-data-incompressible",
-      "repair-rar5-7-store-par2-par2-light-store-nonsolid-none-incompressible",
-      "repair-rar5-7-store-par2-par2-light-store-nonsolid-headers-incompressible",
-      "repair-rar5-7-store-par2-par2-light-store-nonsolid-data-incompressible",
+      "repair-rar5-7-store-par2-par2-articles-light-store-nonsolid-none-incompressible",
+      "repair-rar5-7-store-par2-par2-articles-light-store-nonsolid-headers-incompressible",
+      "repair-rar5-7-store-par2-par2-articles-light-store-nonsolid-data-incompressible",
       "repair-rar5-7-store-par2-par2-heavy-withheld-store-nonsolid-none-incompressible",
       "repair-rar5-7-store-par2-par2-heavy-withheld-store-nonsolid-headers-incompressible",
       "repair-rar5-7-store-par2-par2-heavy-withheld-store-nonsolid-data-incompressible",
@@ -112,7 +118,13 @@
       "sevenzip-headers-store-nonsolid-headers-incompressible",
       "repair-rar4-store-recovery-rar-recovery-volume-light-store-nonsolid-none-incompressible",
       "repair-rar5-store-recovery-rar-recovery-volume-heavy-store-nonsolid-none-incompressible",
-      "repair-sevenzip-store-par2-par2-light-store-nonsolid-none-incompressible",
+      "repair-rar4-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+      "repair-rar5-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+      "repair-sevenzip-store-par2-par2-articles-light-store-nonsolid-none-incompressible",
+      "repair-media-par2-coarse-par2-articles-light-store-nonsolid-none-incompressible",
+      "repair-media-par2-coarse-par2-articles-heavy-store-nonsolid-none-incompressible",
+      "repair-media-par2-10m-par2-articles-light-store-nonsolid-none-incompressible",
+      "repair-media-par2-10m-par2-articles-heavy-store-nonsolid-none-incompressible",
       "direct-mkv"
     ],
     "bluray-store": [
@@ -129,6 +141,16 @@
       "tar-gzip-gzip-nonsolid-none-compressible",
       "tar-xz-xz-nonsolid-none-compressible",
       "rar5-7-tarxz-store-nonsolid-none-incompressible",
+      "nested-2deep-01-store-nonsolid-none-incompressible",
+      "nested-2deep-02-store-nonsolid-none-compressible",
+      "nested-3deep-01-store-nonsolid-none-compressible",
+      "nested-3deep-02-store-nonsolid-none-incompressible",
+      "nested-5deep-01-store-nonsolid-none-compressible",
+      "nested-5deep-02-store-nonsolid-none-incompressible",
+      "nested-broad-01-store-nonsolid-none-incompressible",
+      "nested-broad-02-store-nonsolid-none-compressible",
+      "nested-chase-01-store-nonsolid-none-compressible",
+      "nested-repair-01-par2-articles-light-store-nonsolid-none-incompressible",
       "xz-single-xz-nonsolid-none-compressible",
       "zip-store-store-nonsolid-none-incompressible",
       "zip-deflate-deflate-nonsolid-none-compressible",
@@ -158,6 +180,45 @@
     ],
     "par3-past-par2-cap": [
       "repair-rar5-7-store-pastcap-par3-fft-past-par2-cap-store-nonsolid-none-incompressible"
+    ],
+    "corpus-625k": [
+      "rar4-393-store-store-nonsolid-none-incompressible",
+      "rar4-393-store-store-nonsolid-headers-incompressible",
+      "rar4-393-store-store-nonsolid-data-incompressible",
+      "rar4-store-store-nonsolid-none-incompressible",
+      "rar4-store-store-nonsolid-headers-incompressible",
+      "rar4-store-store-nonsolid-data-incompressible",
+      "rar5-5-store-store-nonsolid-none-incompressible",
+      "rar5-5-store-store-nonsolid-headers-incompressible",
+      "rar5-5-store-store-nonsolid-data-incompressible",
+      "rar5-6-store-store-nonsolid-none-incompressible",
+      "rar5-6-store-store-nonsolid-headers-incompressible",
+      "rar5-6-store-store-nonsolid-data-incompressible",
+      "rar5-7-store-store-nonsolid-none-incompressible",
+      "rar5-7-store-store-nonsolid-headers-incompressible",
+      "rar5-7-store-store-nonsolid-data-incompressible",
+      "repair-rar4-store-par2-par2-heavy-withheld-store-nonsolid-none-incompressible",
+      "repair-rar4-store-par2-par2-heavy-withheld-store-nonsolid-headers-incompressible",
+      "repair-rar4-store-par2-par2-heavy-withheld-store-nonsolid-data-incompressible",
+      "repair-rar5-5-store-par2-par2-heavy-withheld-store-nonsolid-none-incompressible",
+      "repair-rar5-5-store-par2-par2-heavy-withheld-store-nonsolid-headers-incompressible",
+      "repair-rar5-5-store-par2-par2-heavy-withheld-store-nonsolid-data-incompressible",
+      "repair-rar5-7-store-par2-par2-heavy-withheld-store-nonsolid-none-incompressible",
+      "repair-rar5-7-store-par2-par2-heavy-withheld-store-nonsolid-headers-incompressible",
+      "repair-rar5-7-store-par2-par2-heavy-withheld-store-nonsolid-data-incompressible",
+      "rar5-7-quickopen-store-nonsolid-none-incompressible",
+      "sevenzip-store-store-nonsolid-none-incompressible",
+      "sevenzip-headers-store-nonsolid-headers-incompressible",
+      "repair-rar4-store-recovery-rar-recovery-volume-light-store-nonsolid-none-incompressible",
+      "repair-rar5-store-recovery-rar-recovery-volume-heavy-store-nonsolid-none-incompressible",
+      "repair-media-par2-4m-par2-articles-light-store-nonsolid-none-incompressible",
+      "repair-media-par2-4m-par2-articles-heavy-store-nonsolid-none-incompressible",
+      "repair-media-par2-batch-par2-articles-heavy-store-nonsolid-none-incompressible",
+      "direct-mkv"
+    ],
+    "corpus-750k": [
+      "repair-media-par2-fine-par2-articles-light-store-nonsolid-none-incompressible",
+      "repair-media-par2-fine-par2-articles-heavy-store-nonsolid-none-incompressible"
     ]
   },
   "phases": [
@@ -165,12 +226,12 @@
       "name": "B3-rtt10",
       "display_name": "Mixed archive downloads",
       "mode": "sequential",
-      "plan": "plan-B3-eqt-tls-local-rtt10-trimmed.json",
+      "plan": "plan-B3-eqt-tls-local-rtt10-trimmed-700k.json",
       "fixtures_root": "../fixtures",
       "artifacts": "artifacts-B3-rtt10",
       "server_link": "1gbit",
       "server_rtt": "10ms",
-      "article_size": "750k",
+      "article_size": "700k",
       "plan_spec": {
         "fixture_set": "full-corpus",
         "clients": [
@@ -234,6 +295,36 @@
             "client": "nzbfast",
             "fixture_id": "repair-rar5-store-recovery-rar-recovery-volume-heavy-store-nonsolid-none-incompressible",
             "reason": "nzbfast does not use RAR recovery volumes (.rev): it downloads them and then fails the unpack, so the fixture is recorded as did-not-finish rather than re-run"
+          },
+          {
+            "client": "sabnzbd",
+            "fixture_id": "repair-rar4-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "SABnzbd is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
+          },
+          {
+            "client": "sabnzbd",
+            "fixture_id": "repair-rar5-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "SABnzbd is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
+          },
+          {
+            "client": "nzbget",
+            "fixture_id": "repair-rar4-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "NZBGet is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
+          },
+          {
+            "client": "nzbget",
+            "fixture_id": "repair-rar5-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "NZBGet is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
+          },
+          {
+            "client": "nzbfast",
+            "fixture_id": "repair-rar4-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "nzbfast is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
+          },
+          {
+            "client": "nzbfast",
+            "fixture_id": "repair-rar5-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "nzbfast is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
           }
         ]
       }
@@ -242,12 +333,12 @@
       "name": "B3-breadth-rtt10",
       "display_name": "Additional archive formats and codecs",
       "mode": "sequential",
-      "plan": "plan-B3-breadth-eqt-tls-local-rtt10.json",
+      "plan": "plan-B3-breadth-eqt-tls-local-rtt10-700k.json",
       "fixtures_root": "../fixtures",
       "artifacts": "artifacts-B3-breadth-rtt10",
       "server_link": "1gbit",
       "server_rtt": "10ms",
-      "article_size": "750k",
+      "article_size": "700k",
       "plan_spec": {
         "fixture_set": "breadth-formats",
         "clients": [
@@ -269,7 +360,7 @@
       "display_name": "PAR3 repair at scale",
       "mode": "sequential",
       "plan": "plan-B3-par3-scale-eqt-tls-local-rtt10.json",
-      "fixtures_root": "../fixtures",
+      "fixtures_root": "../fixtures-750k",
       "artifacts": "artifacts-B3-par3-scale-rtt10",
       "server_link": "1gbit",
       "server_rtt": "10ms",
@@ -292,7 +383,7 @@
       "display_name": "PAR3 repair past the PAR2 block cap",
       "mode": "sequential",
       "plan": "plan-B3-par3-past-cap-eqt-tls-local-rtt10.json",
-      "fixtures_root": "../fixtures",
+      "fixtures_root": "../fixtures-750k",
       "artifacts": "artifacts-B3-par3-past-cap-rtt10",
       "server_link": "1gbit",
       "server_rtt": "10ms",
@@ -311,17 +402,17 @@
       }
     },
     {
-      "name": "B3-384k-rtt10",
-      "display_name": "Stored archive downloads with smaller articles",
+      "name": "B3-625k-rtt10",
+      "display_name": "Downloads and repairs at the 640000-byte article size",
       "mode": "sequential",
-      "plan": "plan-B3-eqt-tls-local-rtt10-384k.json",
-      "fixtures_root": "../fixtures-384k",
-      "artifacts": "artifacts-B3-384k-rtt10",
+      "plan": "plan-B3-eqt-tls-local-rtt10-625k.json",
+      "fixtures_root": "../fixtures-625k",
+      "artifacts": "artifacts-B3-625k-rtt10",
       "server_link": "1gbit",
       "server_rtt": "10ms",
-      "article_size": "384k",
+      "article_size": "625k",
       "plan_spec": {
-        "fixture_set": "store-corpus",
+        "fixture_set": "corpus-625k",
         "clients": [
           "weaver",
           "sabnzbd",
@@ -365,15 +456,47 @@
       "minimum_blocks": 3
     },
     {
+      "name": "B3-750k-rtt10",
+      "display_name": "Repairs at the 768000-byte article size",
+      "mode": "sequential",
+      "plan": "plan-B3-eqt-tls-local-rtt10-750k.json",
+      "fixtures_root": "../fixtures-750k",
+      "artifacts": "artifacts-B3-750k-rtt10",
+      "server_link": "1gbit",
+      "server_rtt": "10ms",
+      "article_size": "750k",
+      "plan_spec": {
+        "fixture_set": "corpus-750k",
+        "clients": [
+          "weaver",
+          "sabnzbd",
+          "nzbget",
+          "nzbfast"
+        ],
+        "transports": [
+          "tls"
+        ],
+        "profile": "equivalent-throughput",
+        "repetitions": 3,
+        "seed": 20260908
+      },
+      "summarize_baselines": [
+        "sabnzbd",
+        "nzbget",
+        "nzbfast"
+      ],
+      "minimum_blocks": 3
+    },
+    {
       "name": "B3-bluray-rtt10",
       "display_name": "Blu-ray directory extraction: stored versus compressed",
       "mode": "sequential",
-      "plan": "plan-B3-bluray-eqt-tls-local-rtt10.json",
+      "plan": "plan-B3-bluray-eqt-tls-local-rtt10-700k.json",
       "fixtures_root": "../fixtures",
       "artifacts": "artifacts-B3-bluray-rtt10",
       "server_link": "1gbit",
       "server_rtt": "10ms",
-      "article_size": "750k",
+      "article_size": "700k",
       "plan_spec": {
         "fixture_set": "bluray-pair",
         "clients": [
@@ -394,12 +517,12 @@
       "name": "P3-rtt10",
       "display_name": "Mixed archive downloads without transport encryption",
       "mode": "sequential",
-      "plan": "plan-P3-eqt-plaintext-local-rtt10-trimmed.json",
+      "plan": "plan-P3-eqt-plaintext-local-rtt10-trimmed-700k.json",
       "fixtures_root": "../fixtures",
       "artifacts": "artifacts-P3-rtt10",
       "server_link": "1gbit",
       "server_rtt": "10ms",
-      "article_size": "750k",
+      "article_size": "700k",
       "plan_spec": {
         "fixture_set": "full-corpus",
         "clients": [
@@ -463,6 +586,36 @@
             "client": "nzbfast",
             "fixture_id": "repair-rar5-store-recovery-rar-recovery-volume-heavy-store-nonsolid-none-incompressible",
             "reason": "nzbfast does not use RAR recovery volumes (.rev): it downloads them and then fails the unpack, so the fixture is recorded as did-not-finish rather than re-run"
+          },
+          {
+            "client": "sabnzbd",
+            "fixture_id": "repair-rar4-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "SABnzbd is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
+          },
+          {
+            "client": "sabnzbd",
+            "fixture_id": "repair-rar5-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "SABnzbd is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
+          },
+          {
+            "client": "nzbget",
+            "fixture_id": "repair-rar4-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "NZBGet is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
+          },
+          {
+            "client": "nzbget",
+            "fixture_id": "repair-rar5-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "NZBGet is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
+          },
+          {
+            "client": "nzbfast",
+            "fixture_id": "repair-rar4-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "nzbfast is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
+          },
+          {
+            "client": "nzbfast",
+            "fixture_id": "repair-rar5-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "nzbfast is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
           }
         ]
       }
@@ -471,12 +624,12 @@
       "name": "C3-eqt-rtt10",
       "display_name": "Archive downloads to network storage",
       "mode": "sequential",
-      "plan": "plan-C3-nfs-eqt-tls-nfscomplete-rtt10.json",
+      "plan": "plan-C3-nfs-eqt-tls-nfscomplete-rtt10-700k.json",
       "fixtures_root": "../fixtures",
       "artifacts": "artifacts-C3-eqt-rtt10",
       "server_link": "1gbit",
       "server_rtt": "10ms",
-      "article_size": "750k",
+      "article_size": "700k",
       "plan_spec": {
         "fixture_set": "nfs-breadth",
         "clients": [
@@ -505,12 +658,12 @@
       "name": "A3-rtt10",
       "display_name": "Mixed archive downloads with default client settings",
       "mode": "sequential",
-      "plan": "plan-A3-stock-tls-local-rtt10-trimmed.json",
+      "plan": "plan-A3-stock-tls-local-rtt10-trimmed-700k.json",
       "fixtures_root": "../fixtures",
       "artifacts": "artifacts-A3-rtt10",
       "server_link": "1gbit",
       "server_rtt": "10ms",
-      "article_size": "750k",
+      "article_size": "700k",
       "plan_spec": {
         "fixture_set": "full-corpus",
         "clients": [
@@ -574,6 +727,36 @@
             "client": "nzbfast",
             "fixture_id": "repair-rar5-store-recovery-rar-recovery-volume-heavy-store-nonsolid-none-incompressible",
             "reason": "nzbfast does not use RAR recovery volumes (.rev): it downloads them and then fails the unpack, so the fixture is recorded as did-not-finish rather than re-run"
+          },
+          {
+            "client": "sabnzbd",
+            "fixture_id": "repair-rar4-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "SABnzbd is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
+          },
+          {
+            "client": "sabnzbd",
+            "fixture_id": "repair-rar5-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "SABnzbd is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
+          },
+          {
+            "client": "nzbget",
+            "fixture_id": "repair-rar4-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "NZBGet is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
+          },
+          {
+            "client": "nzbget",
+            "fixture_id": "repair-rar5-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "NZBGet is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
+          },
+          {
+            "client": "nzbfast",
+            "fixture_id": "repair-rar4-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "nzbfast is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
+          },
+          {
+            "client": "nzbfast",
+            "fixture_id": "repair-rar5-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "nzbfast is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
           }
         ]
       }
@@ -582,11 +765,11 @@
       "name": "Q10-unthrottled",
       "display_name": "Ten-job queue drain and handoff",
       "mode": "queue-transition",
-      "plan": "plan-Q10-eqt-tls-local-queue-10gbit-rtt0.json",
+      "plan": "plan-Q10-eqt-tls-local-queue-10gbit-rtt0-700k.json",
       "fixtures_root": "../fixtures",
       "artifacts": "artifacts-Q10-unthrottled",
       "server_link": "10gbit",
-      "article_size": "750k",
+      "article_size": "700k",
       "plan_spec": {
         "fixtures": [
           "direct-mkv-200mb"
@@ -610,12 +793,12 @@
       "name": "B3-rtt100",
       "display_name": "Stored archive downloads over a high-latency link",
       "mode": "sequential",
-      "plan": "plan-B3-eqt-tls-local-rtt100.json",
+      "plan": "plan-B3-eqt-tls-local-rtt100-700k.json",
       "fixtures_root": "../fixtures-3",
       "artifacts": "artifacts-B3-rtt100",
       "server_link": "1gbit",
       "server_rtt": "100ms",
-      "article_size": "750k",
+      "article_size": "700k",
       "plan_spec": {
         "fixture_set": "store-corpus",
         "clients": [
@@ -650,6 +833,36 @@
             "client": "nzbfast",
             "fixture_id": "repair-rar5-store-recovery-rar-recovery-volume-heavy-store-nonsolid-none-incompressible",
             "reason": "nzbfast does not use RAR recovery volumes (.rev): it downloads them and then fails the unpack, so the fixture is recorded as did-not-finish rather than re-run"
+          },
+          {
+            "client": "sabnzbd",
+            "fixture_id": "repair-rar4-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "SABnzbd is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
+          },
+          {
+            "client": "sabnzbd",
+            "fixture_id": "repair-rar5-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "SABnzbd is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
+          },
+          {
+            "client": "nzbget",
+            "fixture_id": "repair-rar4-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "NZBGet is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
+          },
+          {
+            "client": "nzbget",
+            "fixture_id": "repair-rar5-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "NZBGet is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
+          },
+          {
+            "client": "nzbfast",
+            "fixture_id": "repair-rar4-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "nzbfast is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
+          },
+          {
+            "client": "nzbfast",
+            "fixture_id": "repair-rar5-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "nzbfast is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
           }
         ]
       },
@@ -664,12 +877,12 @@
       "name": "B3-bluray-rtt100",
       "display_name": "Stored Blu-ray directory extraction over a high-latency link",
       "mode": "sequential",
-      "plan": "plan-B3-bluray-eqt-tls-local-rtt100.json",
+      "plan": "plan-B3-bluray-eqt-tls-local-rtt100-700k.json",
       "fixtures_root": "../fixtures-3",
       "artifacts": "artifacts-B3-bluray-rtt100",
       "server_link": "1gbit",
       "server_rtt": "100ms",
-      "article_size": "750k",
+      "article_size": "700k",
       "plan_spec": {
         "fixture_set": "bluray-store",
         "clients": [
@@ -696,12 +909,12 @@
       "name": "P3-rtt100",
       "display_name": "Stored archive downloads without transport encryption over a high-latency link",
       "mode": "sequential",
-      "plan": "plan-P3-eqt-plaintext-local-rtt100.json",
+      "plan": "plan-P3-eqt-plaintext-local-rtt100-700k.json",
       "fixtures_root": "../fixtures-3",
       "artifacts": "artifacts-P3-rtt100",
       "server_link": "1gbit",
       "server_rtt": "100ms",
-      "article_size": "750k",
+      "article_size": "700k",
       "plan_spec": {
         "fixture_set": "store-corpus",
         "clients": [
@@ -736,6 +949,36 @@
             "client": "nzbfast",
             "fixture_id": "repair-rar5-store-recovery-rar-recovery-volume-heavy-store-nonsolid-none-incompressible",
             "reason": "nzbfast does not use RAR recovery volumes (.rev): it downloads them and then fails the unpack, so the fixture is recorded as did-not-finish rather than re-run"
+          },
+          {
+            "client": "sabnzbd",
+            "fixture_id": "repair-rar4-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "SABnzbd is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
+          },
+          {
+            "client": "sabnzbd",
+            "fixture_id": "repair-rar5-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "SABnzbd is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
+          },
+          {
+            "client": "nzbget",
+            "fixture_id": "repair-rar4-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "NZBGet is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
+          },
+          {
+            "client": "nzbget",
+            "fixture_id": "repair-rar5-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "NZBGet is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
+          },
+          {
+            "client": "nzbfast",
+            "fixture_id": "repair-rar4-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "nzbfast is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
+          },
+          {
+            "client": "nzbfast",
+            "fixture_id": "repair-rar5-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
+            "reason": "nzbfast is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
           }
         ]
       },
@@ -750,12 +993,12 @@
       "name": "B3-depth-rtt500",
       "display_name": "Pipeline depth discovery on a single download over a very high-latency link",
       "mode": "sequential",
-      "plan": "plan-B3-depth-eqt-tls-local-rtt500.json",
+      "plan": "plan-B3-depth-eqt-tls-local-rtt500-700k.json",
       "fixtures_root": "../fixtures",
       "artifacts": "artifacts-B3-depth-rtt500",
       "server_link": "1gbit",
       "server_rtt": "500ms",
-      "article_size": "750k",
+      "article_size": "700k",
       "plan_spec": {
         "fixtures": [
           "direct-mkv-200mb"

@@ -51,8 +51,79 @@ type PAR2Toolchain struct {
 	SHA256        string `json:"sha256"`
 }
 
+// RarparToolchain pins the published rarpar release that writes every
+// standalone PAR3 set in the corpus, with the FFT Reed-Solomon code. The pin
+// is one release asset and its digest: a release binary, never a source
+// build and never a floating tag.
+type RarparToolchain struct {
+	SchemaVersion int    `json:"schema_version"`
+	ID            string `json:"id"`
+	Image         string `json:"image"`
+	Platform      string `json:"platform"`
+	URL           string `json:"url"`
+	SHA256        string `json:"sha256"`
+	Version       string `json:"version"`
+}
+
+func LoadRarparToolchain(path string) (RarparToolchain, error) {
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return RarparToolchain{}, fmt.Errorf("read rarpar toolchain %s: %w", path, err)
+	}
+	var toolchain RarparToolchain
+	if err := json.Unmarshal(contents, &toolchain); err != nil {
+		return RarparToolchain{}, fmt.Errorf("decode rarpar toolchain %s: %w", path, err)
+	}
+	if err := toolchain.Validate(); err != nil {
+		return RarparToolchain{}, err
+	}
+	return toolchain, nil
+}
+
+func (t RarparToolchain) Validate() error {
+	if t.SchemaVersion != 1 {
+		return fmt.Errorf("rarpar toolchain %q has unsupported schema version %d", t.ID, t.SchemaVersion)
+	}
+	if strings.TrimSpace(t.ID) == "" || strings.TrimSpace(t.Image) == "" || strings.TrimSpace(t.Platform) == "" {
+		return fmt.Errorf("rarpar toolchain must include id, image, and platform")
+	}
+	parts := strings.Split(t.Version, ".")
+	if len(parts) != 3 {
+		return fmt.Errorf("rarpar toolchain %q must pin a release version such as 0.9.4, not %q", t.ID, t.Version)
+	}
+	for _, part := range parts {
+		if part == "" || strings.Trim(part, "0123456789") != "" {
+			return fmt.Errorf("rarpar toolchain %q must pin a release version such as 0.9.4, not %q", t.ID, t.Version)
+		}
+	}
+	parsed, err := url.Parse(t.URL)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+		return fmt.Errorf("rarpar toolchain %q must use an https URL", t.ID)
+	}
+	if !strings.Contains(t.URL, "/releases/download/rarpar-v"+t.Version+"/") {
+		return fmt.Errorf("rarpar toolchain %q downloads %s, which is not an asset of release %s", t.ID, t.URL, t.Version)
+	}
+	if len(t.SHA256) != 64 || strings.Trim(t.SHA256, "0123456789abcdefABCDEF") != "" {
+		return fmt.Errorf("rarpar toolchain %q has invalid SHA-256", t.ID)
+	}
+	return nil
+}
+
+func (t RarparToolchain) ManifestID() fixture.ToolchainID {
+	return fixture.ToolchainID{
+		ID:       t.ID,
+		Image:    t.Image,
+		URL:      t.URL,
+		SHA256:   t.SHA256,
+		Platform: t.Platform,
+		Binary:   "rarpar",
+		Version:  t.Version,
+	}
+}
+
 // PAR3Toolchain pins the official PAR3 reference implementation, par3cmdline,
-// used only while materializing PAR3 repair fixtures. The project publishes no
+// used only for the embedded PAR3 lane, which rarpar cannot write into a zip
+// that another tool made. The project publishes no
 // release tarballs, so the pin is one source revision and the digest of the
 // archive GitHub serves for it.
 type PAR3Toolchain struct {

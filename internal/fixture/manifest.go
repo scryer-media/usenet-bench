@@ -63,6 +63,9 @@ type GeneratedManifest struct {
 	// InnerArchive describes a second container between the payload and the
 	// posted one, for the lanes that wrap.
 	InnerArchive *InnerArchiveDetails `json:"inner_archive,omitempty"`
+	// NestedLayers records what each nested layer was written as, innermost
+	// first, for the lanes that carry a nested chain.
+	NestedLayers []NestedLayerDetails `json:"nested_layers,omitempty"`
 	// ZipStructure is what the posted zip was found to contain when it was
 	// parsed back off disk. Every zip lane carries it, including the ordinary
 	// ones, so "this archive is zip64" is a reading of the bytes rather than a
@@ -138,6 +141,25 @@ type SidecarDetails struct {
 	VerifiedBy ToolchainID `json:"verified_by"`
 }
 
+// NestedLayerDetails describes one written layer of a nested chain.
+type NestedLayerDetails struct {
+	// Level counts from one at the innermost layer.
+	Level       int           `json:"level"`
+	Format      ArchiveFormat `json:"format"`
+	Compression Compression   `json:"compression"`
+	// Archives is the number of sibling archives; Files counts their
+	// volumes too, and Bytes is their total size.
+	Archives int   `json:"archives"`
+	Files    int   `json:"files"`
+	Bytes    int64 `json:"bytes"`
+	// RecoveryFiles are the PAR2 files written over the layer's archives.
+	// They travel inside the layer above, so a client meets them only after
+	// unpacking it, and may keep them once they have served their purpose.
+	RecoveryFiles         []FileDigest       `json:"recovery_files,omitempty"`
+	PAR2RedundancyPercent int                `json:"par2_redundancy_percent,omitempty"`
+	Corruptions           []CorruptionDetail `json:"corruptions,omitempty"`
+}
+
 // InnerArchiveDetails describes the container the outer writer stored.
 type InnerArchiveDetails struct {
 	Kind InnerArchive `json:"kind"`
@@ -192,23 +214,46 @@ type ZipStructureDetails struct {
 type RepairDetails struct {
 	Profile               RepairProfile `json:"profile"`
 	PAR2RedundancyPercent int           `json:"par2_redundancy_percent,omitempty"`
-	RARRecoveryVolumes    int           `json:"rar_recovery_volumes,omitempty"`
+	// PAR2SliceBytes and PAR2RecoveryBlocks are set when the PAR2 set was
+	// written to a declared real-world shape instead of by percentage.
+	PAR2SliceBytes     int64 `json:"par2_slice_bytes,omitempty"`
+	PAR2RecoveryBlocks int   `json:"par2_recovery_blocks,omitempty"`
+	// PAR2DamagedSlices counts the distinct slices the lost articles touch,
+	// which is the number of recovery blocks the repair has to use.
+	PAR2DamagedSlices int `json:"par2_damaged_slices,omitempty"`
+	// ArticleBytes is the raw article size the lost articles were chosen
+	// at; the fixture can only be seeded at that size.
+	ArticleBytes       int `json:"article_bytes,omitempty"`
+	RARRecoveryVolumes int `json:"rar_recovery_volumes,omitempty"`
+	// RARRecoveryRecordPercent is the size of the recovery record inside
+	// every volume, as the percentage the archive was written with.
+	RARRecoveryRecordPercent int `json:"rar_recovery_record_percent,omitempty"`
 	// PAR3 records how a PAR3 profile's recovery material was written, so a
 	// timing change between releases can be told apart from a corpus change.
 	PAR3        *PAR3Details       `json:"par3,omitempty"`
 	Corruptions []CorruptionDetail `json:"corruptions,omitempty"`
 }
 
-// PAR3Details names the reference build and the exact creation parameters of
-// a PAR3 repair fixture.
+// PAR3Details names the build that wrote a PAR3 repair fixture, a rarpar
+// release or for the embedded lane the reference, and its exact creation
+// parameters.
 type PAR3Details struct {
 	Toolchain         ToolchainID `json:"toolchain"`
 	Code              string      `json:"code"`
 	RedundancyPercent int         `json:"redundancy_percent"`
 	// BlockSize is zero for embedded PAR3, where the reference chooses it.
-	BlockSize int64    `json:"block_size,omitempty"`
-	Embedded  bool     `json:"embedded,omitempty"`
-	Arguments []string `json:"arguments"`
+	BlockSize int64 `json:"block_size,omitempty"`
+	// RecoveryBlocks is set, and RedundancyPercent left at zero, when the
+	// set was written to a declared real-world shape.
+	RecoveryBlocks int `json:"recovery_blocks,omitempty"`
+	// DamagedBlocks counts the blocks the lost articles touch, each file cut
+	// on its own the way PAR2 cuts it, so a PAR3 lane and its PAR2 twin
+	// report the same figure.
+	DamagedBlocks int `json:"damaged_blocks,omitempty"`
+	// ArticleBytes is the raw article size the lost articles were chosen at.
+	ArticleBytes int      `json:"article_bytes,omitempty"`
+	Embedded     bool     `json:"embedded,omitempty"`
+	Arguments    []string `json:"arguments"`
 	// Cohorts is the number of interleaved FFT cohorts the creation asked
 	// for; zero leaves the choice to the reference.
 	Cohorts int `json:"cohorts,omitempty"`

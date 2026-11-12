@@ -134,8 +134,8 @@ func withholdArticles(document NZBDocument, plan postingPlan, faults []fixture.C
 		if fault.Kind != fixture.WithheldArticleFault {
 			continue
 		}
-		if segmentBytes != fixture.ScatteredArticleBytes {
-			return NZBDocument{}, 0, fmt.Errorf("withheld articles were chosen for %d-byte articles, but this seed posts %d-byte articles", fixture.ScatteredArticleBytes, segmentBytes)
+		if fault.Length != segmentBytes {
+			return NZBDocument{}, 0, fmt.Errorf("withheld articles were chosen for %d-byte articles, but this seed posts %d-byte articles", fault.Length, segmentBytes)
 		}
 		if len(document.Files) != len(plan.Order) {
 			return NZBDocument{}, 0, fmt.Errorf("NZB lists %d files, expected %d", len(document.Files), len(plan.Order))

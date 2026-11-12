@@ -49,7 +49,7 @@ func TestPAR3RecipesMirrorPAR2AndDeclareTheirCode(t *testing.T) {
 		t.Fatal(err)
 	}
 	par2Redundancy, par2Missing := par2RepairParameters(fixture.PAR2LightRepairProfile)
-	if light.redundancy != par2Redundancy || light.withheld != par2Missing || light.flips != 1 || light.codeArg != "-e1" {
+	if light.redundancy != par2Redundancy || light.withheld != par2Missing || light.flips != 1 || light.code != "fft" {
 		t.Fatalf("par3-light does not mirror par2-light: %+v", light)
 	}
 	heavy, err := par3Parameters(fixture.PAR3HeavyWithheldProfile)
@@ -57,21 +57,21 @@ func TestPAR3RecipesMirrorPAR2AndDeclareTheirCode(t *testing.T) {
 		t.Fatal(err)
 	}
 	par2Redundancy, par2Missing = par2RepairParameters(fixture.PAR2HeavyWithheldProfile)
-	if heavy.redundancy != par2Redundancy || heavy.withheld != par2Missing || heavy.flips != 0 || heavy.codeArg != "-e1" {
+	if heavy.redundancy != par2Redundancy || heavy.withheld != par2Missing || heavy.flips != 0 || heavy.code != "fft" {
 		t.Fatalf("par3-heavy-withheld does not mirror par2-heavy-withheld: %+v", heavy)
 	}
 	fft, err := par3Parameters(fixture.PAR3FFTHeavyWithheldProfile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fft.codeArg != "-e8" || fft.withheld != 1 || fft.flips != 1 {
+	if fft.code != "fft" || fft.withheld != 1 || fft.flips != 1 {
 		t.Fatalf("par3-fft-heavy-withheld is not a compound FFT fault: %+v", fft)
 	}
 	inside, err := par3Parameters(fixture.PAR3InsideLightProfile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inside.codeArg != "" || inside.withheld != 0 || inside.flips != par3InsideFaults {
+	if inside.code != "reference-default" || inside.withheld != 0 || inside.flips != par3InsideFaults {
 		t.Fatalf("par3-inside-light recipe = %+v", inside)
 	}
 	if _, err := par3Parameters(fixture.PAR2LightRepairProfile); err == nil {
@@ -79,17 +79,82 @@ func TestPAR3RecipesMirrorPAR2AndDeclareTheirCode(t *testing.T) {
 	}
 }
 
-func TestSelectedCasesRequirePAR3OnlyForPAR3Profiles(t *testing.T) {
+// The reference is needed only for the embedded lane; rarpar writes every
+// standalone PAR3 set.
+func TestSelectedCasesRequireEachPAR3WriterOnlyForItsLanes(t *testing.T) {
 	cases := []fixture.ArchiveCase{
 		{ID: "clean", RepairProfile: fixture.CleanRepairProfile},
 		{ID: "par2", RepairProfile: fixture.PAR2LightRepairProfile},
-		{ID: "par3", RepairProfile: fixture.PAR3InsideLightProfile},
+		{ID: "inside", RepairProfile: fixture.PAR3InsideLightProfile},
+		{ID: "standalone", RepairProfile: fixture.PAR3HeavyWithheldProfile},
 	}
-	if !selectedCasesRequirePAR3(cases, nil) {
-		t.Fatal("an unfiltered run containing a PAR3 lane did not load the PAR3 toolchain")
+	if !selectedCasesRequirePAR3(cases, nil) || !selectedCasesRequireRarpar(cases, nil) {
+		t.Fatal("an unfiltered run containing both PAR3 lanes did not load both writers")
 	}
-	if selectedCasesRequirePAR3(cases, map[string]bool{"clean": true, "par2": true}) {
-		t.Fatal("a run without PAR3 lanes asked for the PAR3 toolchain")
+	if selectedCasesRequirePAR3(cases, map[string]bool{"clean": true, "par2": true, "standalone": true}) {
+		t.Fatal("a run without the embedded lane asked for the PAR3 reference")
+	}
+	if selectedCasesRequireRarpar(cases, map[string]bool{"clean": true, "par2": true, "inside": true}) {
+		t.Fatal("a run without a standalone PAR3 lane asked for rarpar")
+	}
+}
+
+func TestCheckedInRarparToolchainPinsAPublishedRelease(t *testing.T) {
+	toolchain, err := LoadRarparToolchain(filepath.Join("..", "..", "docker", "rarpar", "toolchain.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(toolchain.URL, "https://github.com/scryer-media/rarpar/releases/download/rarpar-v"+toolchain.Version+"/") {
+		t.Fatalf("rarpar is not fetched from its own release: %s", toolchain.URL)
+	}
+	id := toolchain.ManifestID()
+	if id.Version != toolchain.Version || id.SHA256 != toolchain.SHA256 || id.Binary != "rarpar" {
+		t.Fatalf("manifest id does not carry the pin: %+v", id)
+	}
+	toolchain.Version = "latest"
+	if err := toolchain.Validate(); err == nil {
+		t.Fatal("a floating tag was accepted as a rarpar version")
+	}
+	toolchain.Version = "9.9.9"
+	if err := toolchain.Validate(); err == nil || !strings.Contains(err.Error(), "not an asset of release") {
+		t.Fatalf("a URL from another release was accepted: %v", err)
+	}
+}
+
+// Every standalone PAR3 set is FFT, and its declared capacity must hold the
+// recovery blocks the set is created with: 167 blocks need 256, two cohorts
+// sharing 3635 need 2048 each.
+func TestEveryStandalonePAR3RecipeIsFFTWithAFittingCapacity(t *testing.T) {
+	for _, profile := range []fixture.RepairProfile{
+		fixture.PAR3LightRepairProfile, fixture.PAR3HeavyWithheldProfile, fixture.PAR3FFTHeavyWithheldProfile,
+		fixture.PAR3ArticlesLightProfile, fixture.PAR3FFTArticlesHeavyProfile,
+		fixture.PAR3FFTScatteredLightProfile, fixture.PAR3FFTScatteredHeavyProfile, fixture.PAR3FFTPastPAR2CapProfile,
+	} {
+		recipe, err := par3Parameters(profile)
+		if err != nil || recipe.code != "fft" {
+			t.Fatalf("%s is not an FFT recipe: %+v, %v", profile, recipe, err)
+		}
+	}
+	rar := []fixture.FileDigest{{Path: "archive/fixture.part01.rar", Size: 390700000}}
+	if got, err := fftCapacityLog2(rar, 195596, 167, 0, 1); err != nil || got != 8 {
+		t.Fatalf("167 recovery blocks: capacity 2^%d, %v", got, err)
+	}
+	if got, err := fftCapacityLog2(rar, 195596, 256, 0, 1); err != nil || got != 8 {
+		t.Fatalf("256 recovery blocks: capacity 2^%d, %v", got, err)
+	}
+	if got, err := fftCapacityLog2(rar, 195596, 1, 0, 1); err != nil || got != 0 {
+		t.Fatalf("one recovery block: capacity 2^%d, %v", got, err)
+	}
+	pastCap := []fixture.FileDigest{{Path: "archive/fixture.part01.rar", Size: 26 << 30}}
+	if got, err := fftCapacityLog2(pastCap, fixture.ScatteredArticleBytes, 0, 10, 2); err != nil || got != 11 {
+		t.Fatalf("past-cap lane in two cohorts: capacity 2^%d, %v", got, err)
+	}
+	if _, err := fftCapacityLog2(pastCap, fixture.ScatteredArticleBytes, 0, 10, 1); err != nil {
+		t.Fatalf("36351 blocks and 4096 recovery fit one cohort: %v", err)
+	}
+	huge := []fixture.FileDigest{{Path: "archive/fixture.part01.rar", Size: 60 << 30}}
+	if _, err := fftCapacityLog2(huge, fixture.ScatteredArticleBytes, 0, 10, 1); err == nil {
+		t.Fatal("a cohort past the 65536-point transform was accepted")
 	}
 }
 

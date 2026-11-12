@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "id": "rarpar-0.9.4",
+  "image": "weaver-nntp-bench-rarpar:0.9.4",
+  "platform": "linux/amd64",
+  "url": "https://github.com/scryer-media/rarpar/releases/download/rarpar-v0.9.4/rarpar-rarpar-v0.9.4-linux-x86_64-musl-direct.tar.gz",
+  "sha256": "33be0dd5f6f2b9a5a01628794ae1662d35c43ce865a4632d4274c202f02cf74c",
+  "version": "0.9.4"
+}

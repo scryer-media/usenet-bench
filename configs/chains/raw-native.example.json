@@ -30,7 +30,7 @@
       "name": "N0-eqt-local",
       "display_name": "Native application downloads without added latency",
       "mode": "sequential",
-      "plan": "plan-N0-eqt-tls-local.json",
+      "plan": "plan-N0-eqt-tls-local-700k.json",
       "fixtures_root": "../fixtures",
       "artifacts": "artifacts-N0-eqt-local",
       "server_link": "1gbit",
@@ -39,7 +39,7 @@
         "sabnzbd",
         "nzbget"
       ],
-      "article_size": "750k",
+      "article_size": "700k",
       "plan_spec": {
         "fixture_set": "native-breadth",
         "transports": [
@@ -54,7 +54,7 @@
       "name": "N100-eqt-local",
       "display_name": "Native application downloads over a high-latency link",
       "mode": "sequential",
-      "plan": "plan-N100-eqt-tls-local.json",
+      "plan": "plan-N100-eqt-tls-local-700k.json",
       "fixtures_root": "../fixtures",
       "artifacts": "artifacts-N100-eqt-local",
       "server_link": "1gbit",
@@ -63,7 +63,7 @@
         "sabnzbd",
         "nzbget"
       ],
-      "article_size": "750k",
+      "article_size": "700k",
       "plan_spec": {
         "fixture_set": "native-breadth",
         "transports": [
@@ -78,7 +78,7 @@
       "name": "N500-depth-eqt-local",
       "display_name": "Native pipeline depth discovery on a single download over a very high-latency link",
       "mode": "sequential",
-      "plan": "plan-N500-depth-eqt-tls-local.json",
+      "plan": "plan-N500-depth-eqt-tls-local-700k.json",
       "fixtures_root": "../fixtures",
       "artifacts": "artifacts-N500-depth-eqt-local",
       "server_link": "1gbit",
@@ -87,7 +87,7 @@
         "sabnzbd",
         "nzbget"
       ],
-      "article_size": "750k",
+      "article_size": "700k",
       "plan_spec": {
         "fixtures": [
           "direct-mkv-200mb"

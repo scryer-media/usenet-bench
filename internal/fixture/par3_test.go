@@ -130,11 +130,12 @@ func TestCheckedInMatrixCarriesThePAR3BreadthLanes(t *testing.T) {
 		inCorpus[id] = true
 	}
 	want := map[string]RepairProfile{
-		"repair-rar5-7-store-par3-par3-light-store-nonsolid-none-incompressible":                     PAR3LightRepairProfile,
+		"repair-rar5-7-store-par3-par3-articles-light-store-nonsolid-none-incompressible":            PAR3ArticlesLightProfile,
+		"repair-media-par3-fft-par3-articles-light-store-nonsolid-none-incompressible":               PAR3ArticlesLightProfile,
+		"repair-media-par3-fft-par3-fft-articles-heavy-store-nonsolid-none-incompressible":           PAR3FFTArticlesHeavyProfile,
 		"repair-rar5-7-store-par3-par3-heavy-withheld-store-nonsolid-none-incompressible":            PAR3HeavyWithheldProfile,
 		"repair-rar5-7-store-par3-headers-par3-heavy-withheld-store-nonsolid-headers-incompressible": PAR3HeavyWithheldProfile,
-		"repair-media-par3-fft-par3-fft-heavy-withheld-store-nonsolid-none-incompressible":           PAR3FFTHeavyWithheldProfile,
-		"repair-zip-store-par3-inside-par3-inside-light-store-nonsolid-none-incompressible":          PAR3InsideLightProfile,
+		"repair-media-par3-fft-batch-par3-fft-heavy-withheld-store-nonsolid-none-incompressible":     PAR3FFTHeavyWithheldProfile,
 		"repair-rar5-7-store-scatter-par3-fft-scattered-light-store-nonsolid-none-incompressible":    PAR3FFTScatteredLightProfile,
 		"repair-rar5-7-store-scatter-par3-fft-scattered-heavy-store-nonsolid-none-incompressible":    PAR3FFTScatteredHeavyProfile,
 		"repair-rar5-7-store-pastcap-par3-fft-past-par2-cap-store-nonsolid-none-incompressible":      PAR3FFTPastPAR2CapProfile,
@@ -178,7 +179,7 @@ func TestScatteredLanesPairEveryPAR3LaneWithItsPAR2Twin(t *testing.T) {
 	}
 	bySet := map[string]map[RepairProfile]ArchiveCase{}
 	for _, c := range cases {
-		if !c.RepairProfile.WithholdsArticles() || c.RepairProfile.ExceedsPAR2BlockLimit() {
+		if _, _, scattered := c.RepairProfile.ScatteredDamage(); !scattered || c.RepairProfile.ExceedsPAR2BlockLimit() {
 			continue
 		}
 		if bySet[c.SetID] == nil {

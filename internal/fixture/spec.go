@@ -375,27 +375,55 @@ const (
 	PAR2HeavyRepairProfile        RepairProfile = "par2-heavy"
 	RARRecoveryVolumeLightProfile RepairProfile = "rar-recovery-volume-light"
 	RARRecoveryVolumeHeavyProfile RepairProfile = "rar-recovery-volume-heavy"
+	// RARRecoveryRecordLightProfile writes a recovery record inside every
+	// RAR volume and loses the same articles as the light PAR2 lane of the
+	// same shape. The PAR2 census reads NZBs and PAR2 packets, so it holds no
+	// figure for recovery records or recovery volumes; both RAR recovery
+	// kinds borrow a real PAR2 post's redundancy, payload, volume size and
+	// article size instead of values picked for the fixture.
+	RARRecoveryRecordLightProfile RepairProfile = "rar-recovery-record-light"
 	// PAR2HeavyWithheldProfile posts the same PAR2 material as par2-heavy,
 	// but the absent volume is still listed in the NZB with article
 	// identifiers that were never posted. That is what a real short post
 	// looks like to a client: the file is requested and every article for it
 	// is refused, rather than the file simply never being mentioned.
 	PAR2HeavyWithheldProfile RepairProfile = "par2-heavy-withheld"
+	// The article-loss profiles are how a real post is damaged: whole
+	// articles the server no longer has, a few of them, anywhere in the
+	// post. They are written only over a set that declares a RecoveryShape, so
+	// the slice size, the recovery block count and the article size are the
+	// ones a real post carried rather than values picked for the fixture.
+	// Light loses the articles that damage about five slices; heavy loses
+	// enough to use about nine tenths of the recovery blocks. The census the
+	// shapes come from records what posters wrote, not how much of it
+	// servers later lost, so the two severities are bounds on a repair's
+	// work and not measured loss rates.
+	PAR2ArticlesLightProfile RepairProfile = "par2-articles-light"
+	PAR2ArticlesHeavyProfile RepairProfile = "par2-articles-heavy"
+	// The PAR3 article-loss profiles are the same fault over the same
+	// shape, repaired by PAR3 with the FFT Reed-Solomon code. No PAR3
+	// post has been observed, so a PAR3 lane borrows a real PAR2 post's
+	// payload, block size, recovery block count and article size, and two
+	// sets with the same shape and severity lose the same articles.
+	PAR3ArticlesLightProfile    RepairProfile = "par3-articles-light"
+	PAR3FFTArticlesHeavyProfile RepairProfile = "par3-fft-articles-heavy"
 
-	// The PAR3 profiles are written by the official par3cmdline reference.
+	// Every standalone PAR3 set is written by a pinned, published rarpar
+	// release with the FFT Reed-Solomon code (Leopard). The embedded profile
+	// alone is written by the official par3cmdline reference, because rarpar
+	// embeds PAR3 only in an archive it writes itself.
 	// PAR3 is a large specification and the corpus deliberately covers only
 	// the shapes a downloader meets first, so that each lane is a stable
 	// release-over-release timing rather than a conformance suite.
 	//
 	// PAR3LightRepairProfile and PAR3HeavyWithheldProfile mirror their PAR2
 	// counterparts exactly — same redundancy, same block size, same fault —
-	// with Cauchy Reed-Solomon, the reference's default code, so a PAR3 lane
+	// so a PAR3 lane
 	// and its PAR2 sibling over the same archive shape differ only in the
 	// parity format.
 	PAR3LightRepairProfile   RepairProfile = "par3-light"
 	PAR3HeavyWithheldProfile RepairProfile = "par3-heavy-withheld"
-	// PAR3FFTHeavyWithheldProfile uses the FFT Reed-Solomon code (Leopard)
-	// and a compound fault: one input file is withheld and a second is
+	// PAR3FFTHeavyWithheldProfile is a compound fault: one input file is withheld and a second is
 	// damaged in place, so one repair has to reconstruct a whole file and
 	// patch another from the same recovery blocks.
 	PAR3FFTHeavyWithheldProfile RepairProfile = "par3-fft-heavy-withheld"
@@ -425,7 +453,7 @@ const (
 	// damages about two PAR2 blocks; at the heavy severity's 10% redundancy no
 	// PAR2 set of that size can repair the damage, while PAR3 keeps one block
 	// per article and repairs it with room to spare. The generator proves
-	// both halves: the reference PAR3 repair, and the exact count of PAR2
+	// both halves: the PAR3 repair, and the exact count of PAR2
 	// blocks the same articles would damage at PAR2's smallest legal block
 	// size, refusing the fixture unless that count exceeds PAR2's recovery.
 	// The FFT set is also split into two interleaved cohorts, which the
@@ -445,6 +473,8 @@ const ScatteredArticleBytes = 768000
 func (p RepairProfile) Valid() bool {
 	switch p {
 	case CleanRepairProfile, PAR2LightRepairProfile, PAR2HeavyRepairProfile, PAR2HeavyWithheldProfile, RARRecoveryVolumeLightProfile, RARRecoveryVolumeHeavyProfile,
+		RARRecoveryRecordLightProfile,
+		PAR2ArticlesLightProfile, PAR2ArticlesHeavyProfile, PAR3ArticlesLightProfile, PAR3FFTArticlesHeavyProfile,
 		PAR3LightRepairProfile, PAR3HeavyWithheldProfile, PAR3FFTHeavyWithheldProfile, PAR3InsideLightProfile,
 		PAR2ScatteredLightProfile, PAR2ScatteredHeavyProfile, PAR3FFTScatteredLightProfile, PAR3FFTScatteredHeavyProfile,
 		PAR3FFTPastPAR2CapProfile:
@@ -459,7 +489,8 @@ func (p RepairProfile) Valid() bool {
 func (p RepairProfile) UsesPAR3() bool {
 	switch p {
 	case PAR3LightRepairProfile, PAR3HeavyWithheldProfile, PAR3FFTHeavyWithheldProfile, PAR3InsideLightProfile,
-		PAR3FFTScatteredLightProfile, PAR3FFTScatteredHeavyProfile, PAR3FFTPastPAR2CapProfile:
+		PAR3FFTScatteredLightProfile, PAR3FFTScatteredHeavyProfile, PAR3FFTPastPAR2CapProfile,
+		PAR3ArticlesLightProfile, PAR3FFTArticlesHeavyProfile:
 		return true
 	default:
 		return false
@@ -470,7 +501,78 @@ func (p RepairProfile) UsesPAR3() bool {
 // articles refused by the server rather than whole files or flipped bytes.
 func (p RepairProfile) WithholdsArticles() bool {
 	_, _, ok := p.ScatteredDamage()
-	return ok
+	return ok || p.LosesArticles()
+}
+
+// LosesArticles reports whether the profile withholds whole articles from a
+// post whose recovery set has a declared real-world shape.
+func (p RepairProfile) LosesArticles() bool {
+	return p.ArticleLossSeverity() != ""
+}
+
+// ArticleLossSeverity names how much an article-loss profile loses. PAR2 and
+// PAR3 profiles of one severity share it, so they lose the same articles.
+func (p RepairProfile) ArticleLossSeverity() string {
+	switch p {
+	case PAR2ArticlesLightProfile, PAR3ArticlesLightProfile, RARRecoveryRecordLightProfile:
+		return "light"
+	case PAR2ArticlesHeavyProfile, PAR3FFTArticlesHeavyProfile:
+		return "heavy"
+	default:
+		return ""
+	}
+}
+
+// AcceptsRecoveryShape reports whether the profile can write its recovery
+// set to a declared slice size and recovery block count. The scattered
+// profiles cut one block per article, the embedded PAR3 profile leaves the
+// geometry to the reference. The RAR recovery kinds have no slices of their
+// own; they take the shape's redundancy, as a whole number of recovery volumes
+// or a recovery-record percentage.
+func (p RepairProfile) AcceptsRecoveryShape() bool {
+	switch p {
+	case RARRecoveryVolumeLightProfile, RARRecoveryVolumeHeavyProfile:
+		return true
+	case PAR2LightRepairProfile, PAR2HeavyRepairProfile, PAR2HeavyWithheldProfile,
+		PAR3LightRepairProfile, PAR3HeavyWithheldProfile, PAR3FFTHeavyWithheldProfile:
+		return true
+	default:
+		return p.LosesArticles()
+	}
+}
+
+// ArticleLossSlices is how many PAR2 slices an article-loss profile may
+// damage, given the recovery blocks the post carries.
+func (p RepairProfile) ArticleLossSlices(recoveryBlocks int) int {
+	switch p.ArticleLossSeverity() {
+	case "light":
+		return min(5, recoveryBlocks)
+	case "heavy":
+		return recoveryBlocks * 9 / 10
+	default:
+		return 0
+	}
+}
+
+// RecoveryShape is the geometry of a recovery set as a real post carried it.
+// Each shape in the matrix is one observed post: the one nearest the median
+// size of its group in the PAR2 census of 2026-10-13 (476 posts with parsed
+// PAR2). That census holds no PAR3 post, so a PAR3 set takes the shape of a
+// real PAR2 one.
+type RecoveryShape struct {
+	// SliceBytes is the PAR2 slice size, or the PAR3 block size.
+	SliceBytes int64 `json:"slice_bytes"`
+	// RecoveryBlocks is the number of recovery blocks posted.
+	RecoveryBlocks int `json:"recovery_blocks"`
+	// ArticleBytes is the raw article size the post was split at. The
+	// article-loss profiles choose whole articles of this size, so the
+	// fixture can only be seeded at it.
+	ArticleBytes int `json:"article_bytes"`
+}
+
+// Declared reports whether the set gave its PAR2 material a shape at all.
+func (s RecoveryShape) Declared() bool {
+	return s != RecoveryShape{}
 }
 
 // ScatteredDamage is the severity of a scattered profile: how many articles
@@ -502,7 +604,8 @@ func (p RepairProfile) EmbedsPAR3() bool {
 // UsesPAR2 reports whether the profile posts PAR2 recovery material.
 func (p RepairProfile) UsesPAR2() bool {
 	switch p {
-	case PAR2LightRepairProfile, PAR2HeavyRepairProfile, PAR2HeavyWithheldProfile, PAR2ScatteredLightProfile, PAR2ScatteredHeavyProfile:
+	case PAR2LightRepairProfile, PAR2HeavyRepairProfile, PAR2HeavyWithheldProfile, PAR2ScatteredLightProfile, PAR2ScatteredHeavyProfile,
+		PAR2ArticlesLightProfile, PAR2ArticlesHeavyProfile:
 		return true
 	default:
 		return false
@@ -513,6 +616,69 @@ func (p RepairProfile) UsesPAR2() bool {
 // volumes, which only the RAR writers can produce.
 func (p RepairProfile) UsesRARRecoveryVolumes() bool {
 	return p == RARRecoveryVolumeLightProfile || p == RARRecoveryVolumeHeavyProfile
+}
+
+// UsesRARRecoveryRecord reports whether the profile's archive carries a RAR
+// recovery record inside each volume.
+func (p RepairProfile) UsesRARRecoveryRecord() bool {
+	return p == RARRecoveryRecordLightProfile
+}
+
+// redundancyPerMille is the shape's recovery as thousandths of the payload it
+// protects: recovery blocks over the slices the payload cuts into.
+func (s RecoveryShape) redundancyPerMille(payloadBytes int64) int64 {
+	slices := (payloadBytes + s.SliceBytes - 1) / s.SliceBytes
+	return (int64(s.RecoveryBlocks)*1000 + slices/2) / slices
+}
+
+func (c ArchiveCase) payloadBytes() (int64, error) {
+	size, err := ByteSize(c.BytesPerFile)
+	if err != nil {
+		return 0, fmt.Errorf("fixture %q needs bytes_per_file to borrow a recovery shape: %w", c.ID, err)
+	}
+	return size * int64(max(c.FileCount, 1)), nil
+}
+
+// RARRecoveryRecordPercent is the recovery-record size the archive is written
+// with: the borrowed PAR2 shape's redundancy as a whole percentage. The median
+// RAR post's 167 recovery blocks over 1998 slices give 8.
+func (c ArchiveCase) RARRecoveryRecordPercent() (int, error) {
+	if !c.RecoveryShape.Declared() {
+		return 0, fmt.Errorf("fixture %q needs a recovery_shape to size its recovery record", c.ID)
+	}
+	payload, err := c.payloadBytes()
+	if err != nil {
+		return 0, err
+	}
+	percent := int((c.RecoveryShape.redundancyPerMille(payload) + 5) / 10)
+	// RAR4 archives accept a recovery record of at most ten percent.
+	if percent < 1 || percent > 10 {
+		return 0, fmt.Errorf("fixture %q borrows a %d%% recovery shape, outside the 1-10%% a RAR recovery record lane accepts", c.ID, percent)
+	}
+	return percent, nil
+}
+
+// RARRecoveryVolumeCount is how many .rev volumes a recovery-volume lane
+// posts beside the given number of archive volumes. With a borrowed PAR2
+// shape, light is that shape's redundancy as a whole number of volumes (8.4%
+// of thirteen volumes is one) and heavy is twice that. Without one, the
+// fixed counts are one and two.
+func (c ArchiveCase) RARRecoveryVolumeCount(archiveVolumes int) (int, error) {
+	count := 1
+	if c.RecoveryShape.Declared() {
+		payload, err := c.payloadBytes()
+		if err != nil {
+			return 0, err
+		}
+		count = max(1, int((c.RecoveryShape.redundancyPerMille(payload)*int64(archiveVolumes)+500)/1000))
+	}
+	if c.RepairProfile == RARRecoveryVolumeHeavyProfile {
+		count *= 2
+	}
+	if count >= archiveVolumes {
+		return 0, fmt.Errorf("fixture %q would post %d recovery volumes for %d archive volumes", c.ID, count, archiveVolumes)
+	}
+	return count, nil
 }
 
 // Matrix is the stable source definition. It expands to one ArchiveCase for
@@ -560,6 +726,9 @@ type FixtureSet struct {
 	// InnerArchive wraps the payload in a second container before the outer
 	// writer stores it.
 	InnerArchive InnerArchive `json:"inner_archive,omitempty"`
+	// Nested declares a chain of containers between the payload and the
+	// posted archive, innermost first.
+	Nested NestedChain `json:"nested,omitempty"`
 	// ZipStructure selects a structural variant of the ZIP container: zip64
 	// records, or streamed data descriptors. Empty is the ordinary zip the
 	// other zip lanes carry.
@@ -574,6 +743,10 @@ type FixtureSet struct {
 	// set, written the way volume sizes are ("224m"). Empty keeps the
 	// generator default for the payload kind and file count.
 	BytesPerFile string `json:"bytes_per_file,omitempty"`
+	// RecoveryShape gives the set's PAR2 or PAR3 recovery material the
+	// geometry of a real post. Without it the profiles keep their fixed
+	// 1 MiB slices and percentage.
+	RecoveryShape RecoveryShape `json:"recovery_shape,omitzero"`
 	// VolumeSize is the writer's split size. It is required for the formats
 	// that always post multi-volume and must be empty for the formats that
 	// cannot split themselves at all.
@@ -599,11 +772,13 @@ type ArchiveCase struct {
 	QuickOpen          bool          `json:"quick_open,omitempty"`
 	TextCompression    bool          `json:"text_compression,omitempty"`
 	InnerArchive       InnerArchive  `json:"inner_archive,omitempty"`
+	Nested             NestedChain   `json:"nested,omitempty"`
 	ZipStructure       ZipStructure  `json:"zip_structure,omitempty"`
 	Sidecar            Sidecar       `json:"sidecar,omitempty"`
 	Encoding           PostEncoding  `json:"encoding"`
 	FileCount          int           `json:"file_count"`
 	BytesPerFile       string        `json:"bytes_per_file,omitempty"`
+	RecoveryShape      RecoveryShape `json:"recovery_shape,omitzero"`
 	VolumeSize         string        `json:"volume_size"`
 }
 
@@ -733,11 +908,13 @@ func (m Matrix) Expand() ([]ArchiveCase, error) {
 								QuickOpen:          set.QuickOpen,
 								TextCompression:    set.TextCompression,
 								InnerArchive:       set.InnerArchive,
+								Nested:             set.Nested,
 								ZipStructure:       set.ZipStructure,
 								Sidecar:            set.Sidecar,
 								Encoding:           encoding,
 								FileCount:          set.FileCount,
 								BytesPerFile:       set.BytesPerFile,
+								RecoveryShape:      set.RecoveryShape,
 								VolumeSize:         set.VolumeSize,
 							})
 						}
@@ -807,6 +984,9 @@ func (s FixtureSet) validate() error {
 			}
 		}
 	}
+	if err := s.validateNested(); err != nil {
+		return err
+	}
 	if err := s.validateZipStructure(); err != nil {
 		return err
 	}
@@ -828,13 +1008,47 @@ func (s FixtureSet) validate() error {
 		if s.ArchiveFormat != RAR4 && s.ArchiveFormat != RAR5 && profile.UsesRARRecoveryVolumes() {
 			return fmt.Errorf("fixture set %q cannot use repair_profile %q: RAR recovery volumes are not a %s feature", s.ID, profile, s.ArchiveFormat)
 		}
+		if profile.UsesRARRecoveryRecord() {
+			if s.ArchiveFormat != RAR4 && s.ArchiveFormat != RAR5 {
+				return fmt.Errorf("fixture set %q cannot use repair_profile %q: a recovery record is not a %s feature", s.ID, profile, s.ArchiveFormat)
+			}
+			// The record is written when the archive is, so every case of
+			// the set carries it and no other profile can share the set.
+			if len(s.RepairProfiles) != 1 {
+				return fmt.Errorf("fixture set %q cannot mix repair_profile %q with others: the recovery record is part of the archive", s.ID, profile)
+			}
+			if strings.TrimSpace(s.VolumeSize) == "" || s.BytesPerFile == "" {
+				return fmt.Errorf("fixture set %q needs volume_size and bytes_per_file for repair_profile %q", s.ID, profile)
+			}
+		}
 		if err := s.validatePAR3Profile(profile); err != nil {
 			return err
+		}
+		if profile.LosesArticles() && !s.RecoveryShape.Declared() {
+			return fmt.Errorf("fixture set %q cannot use repair_profile %q without a recovery_shape: the lost articles are chosen against a real post's slice and article sizes", s.ID, profile)
+		}
+		if s.RecoveryShape.Declared() && !profile.AcceptsRecoveryShape() {
+			return fmt.Errorf("fixture set %q declares a recovery_shape, which repair_profile %q does not use", s.ID, profile)
 		}
 		// Articles are withheld by rewriting the NZB the yEnc poster emits;
 		// the uuencode seeder has no such step and would post them all.
 		if profile.WithholdsArticles() && s.Encoding != "" && s.Encoding != YEncEncoding {
 			return fmt.Errorf("fixture set %q cannot use repair_profile %q with encoding %q: withheld articles are a yEnc posting feature", s.ID, profile, s.Encoding)
+		}
+	}
+	if shape := s.RecoveryShape; shape.Declared() {
+		if len(s.RepairProfiles) == 0 {
+			return fmt.Errorf("fixture set %q declares a recovery_shape but no repair profile", s.ID)
+		}
+		// PAR2 block sizes are multiples of four bytes.
+		if shape.SliceBytes < 4 || shape.SliceBytes%4 != 0 {
+			return fmt.Errorf("fixture set %q has invalid recovery_shape slice_bytes %d", s.ID, shape.SliceBytes)
+		}
+		if shape.RecoveryBlocks < 1 || shape.RecoveryBlocks > PAR2BlockLimit {
+			return fmt.Errorf("fixture set %q has invalid recovery_shape recovery_blocks %d", s.ID, shape.RecoveryBlocks)
+		}
+		if shape.ArticleBytes < 1024 {
+			return fmt.Errorf("fixture set %q has invalid recovery_shape article_bytes %d", s.ID, shape.ArticleBytes)
 		}
 	}
 	if s.PayloadLayout == "" {
@@ -1122,6 +1336,13 @@ func (c ArchiveCase) RARArgs(archive string, inputs []string) ([]string, error) 
 		args = append(args, "-hp"+FixturePassword)
 	default:
 		return nil, fmt.Errorf("fixture %q has unsupported encryption %q", c.ID, c.Encryption)
+	}
+	if c.RepairProfile.UsesRARRecoveryRecord() {
+		percent, err := c.RARRecoveryRecordPercent()
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, fmt.Sprintf("-rr%dp", percent))
 	}
 	if strings.TrimSpace(c.VolumeSize) != "" {
 		args = append(args, "-v"+c.VolumeSize)

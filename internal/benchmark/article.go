@@ -23,29 +23,34 @@ type ArticleProfile struct {
 	RawBytes int    `json:"raw_bytes"`
 }
 
+// The sizes come from the PAR2 census of 2026-10-13, which measured the
+// article size of 476 real posts: 716800 bytes in 280 of them, 640000 in 140,
+// 768000 in 50, and nothing near 393216.
 const (
-	// Article750K is the corpus default and what current posting tools
-	// produce: 768000 bytes, the round 750 KiB every widely used poster
-	// defaults to today.
+	// Article750K is 768000 bytes, a size about one real post in ten is
+	// split at. It is the default only because every plan written before
+	// article size was recorded was seeded at it; new series should name
+	// Article700K.
 	Article750K = "750k"
-	// Article384K is the realistic lower bound. 393216 bytes is what a poster
-	// configured for 3000 yEnc lines emits, which was the common default
-	// before the article size crept up, and it is still what a backfill of
-	// older posts hands a client. It is not a claim about how many posts on
-	// Usenet are at this size — the corpus makes no such claim — only that it
-	// is a size real posts are at, and the smallest that is still common.
+	// Article384K is 393216 bytes, what a poster configured for 3000 yEnc
+	// lines emits. No post in the census is at this size, so it stands for
+	// old backfill only and no shipped series uses it.
 	Article384K = "384k"
-	// Article700K is 716800 bytes, Nyuu's own default. The corpus is never
-	// seeded at it; it exists for posts the benchmark did not make, such as a
-	// provider's or a client project's published test download, which were
-	// posted at whatever the poster's default was.
+	// Article700K is 716800 bytes, Nyuu's own default and the size of about
+	// six real posts in ten. It is the size a series should seed its main
+	// corpus at.
 	Article700K = "700k"
+	// Article625K is 640000 bytes, the size of about three real posts in
+	// ten, all of them from one posting pipeline that also writes its PAR2
+	// with 4 MiB or 4480000-byte slices.
+	Article625K = "625k"
 )
 
 var articleProfiles = map[string]int{
 	Article750K: 750 << 10,
 	Article384K: 384 << 10,
 	Article700K: 700 << 10,
+	Article625K: 625 << 10,
 }
 
 // DefaultArticleProfile is what a plan that does not mention article size

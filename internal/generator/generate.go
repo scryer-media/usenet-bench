@@ -64,6 +64,8 @@ type Config struct {
 	PAR2DockerfilePath       string
 	PAR3ToolchainPath        string
 	PAR3DockerfilePath       string
+	RarparToolchainPath      string
+	RarparDockerfilePath     string
 	SevenZipToolchainPath    string
 	SevenZipDockerfilePath   string
 	GNUToolsToolchainPath    string
@@ -107,6 +109,12 @@ func (c Config) withDefaults() Config {
 	}
 	if c.PAR3DockerfilePath == "" {
 		c.PAR3DockerfilePath = "docker/par3/Dockerfile"
+	}
+	if c.RarparToolchainPath == "" {
+		c.RarparToolchainPath = "docker/rarpar/toolchain.json"
+	}
+	if c.RarparDockerfilePath == "" {
+		c.RarparDockerfilePath = "docker/rarpar/Dockerfile"
 	}
 	if c.SevenZipToolchainPath == "" {
 		c.SevenZipToolchainPath = "docker/sevenzip/toolchain.json"
@@ -233,6 +241,19 @@ func Generate(ctx context.Context, config Config) ([]fixture.GeneratedManifest, 
 		}
 		par3Toolchain = &loaded
 	}
+	var rarparToolchain *RarparToolchain
+	if selectedCasesRequireRarpar(cases, config.CaseIDs) {
+		loaded, err := LoadRarparToolchain(config.RarparToolchainPath)
+		if err != nil {
+			return nil, err
+		}
+		if config.BuildImages {
+			if err := buildRarparImage(ctx, config, loaded); err != nil {
+				return nil, err
+			}
+		}
+		rarparToolchain = &loaded
+	}
 	var sevenZipToolchain *SevenZipToolchain
 	if selectedCasesRequireSevenZip(cases, config.CaseIDs) {
 		loaded, err := LoadSevenZipToolchain(config.SevenZipToolchainPath)
@@ -282,6 +303,7 @@ func Generate(ctx context.Context, config Config) ([]fixture.GeneratedManifest, 
 	writers := writerToolchains{
 		PAR2:     par2Toolchain,
 		PAR3:     par3Toolchain,
+		Rarpar:   rarparToolchain,
 		SevenZip: sevenZipToolchain,
 		GNUTools: gnuToolsToolchain,
 		UUCodec:  uuToolchain,
@@ -425,6 +447,12 @@ func generateCase(
 			return fixture.GeneratedManifest{}, err
 		}
 	}
+	var nestedLayers []fixture.NestedLayerDetails
+	if archiveCase.Nested != "" {
+		if inputs, nestedLayers, err = writeNestedLayers(ctx, config, archiveCase, writers, caseDir, inputs); err != nil {
+			return fixture.GeneratedManifest{}, err
+		}
+	}
 	if err := createArchive(ctx, config, archiveCase, writers, caseDir, inputs); err != nil {
 		return fixture.GeneratedManifest{}, fmt.Errorf("create fixture %q: %w", archiveCase.ID, err)
 	}
@@ -513,6 +541,7 @@ func generateCase(
 		},
 		Sidecars:     sidecars,
 		InnerArchive: innerArchive,
+		NestedLayers: nestedLayers,
 		ZipStructure: zipStructure,
 		Encoding:     archiveCase.PostEncodingOrDefault(),
 	}

@@ -102,3 +102,17 @@ func TestWithholdArticlesIsANoOpWithoutArticleFaults(t *testing.T) {
 		t.Fatal("a document with nothing withheld was rewritten")
 	}
 }
+
+// A fixture copied from a real post is cut at that post's article size, not
+// the scattered lanes' one. The seed must accept it at its own size and
+// refuse it at any other.
+func TestWithholdArticlesFollowsTheFaultsOwnArticleSize(t *testing.T) {
+	const real = 716800
+	fault := fixture.CorruptionDetail{Kind: fixture.WithheldArticleFault, Path: "archive/fixture.part03.rar", Offset: real, Length: real}
+	if _, count, err := withholdArticles(postedDocument(), postedOnlyPlan(t), []fixture.CorruptionDetail{fault}, "run-1", "bench-fixture", real); err != nil || count != 1 {
+		t.Fatalf("a 716800-byte article was not withheld from a 716800-byte seed: %d, %v", count, err)
+	}
+	if _, _, err := withholdArticles(postedDocument(), postedOnlyPlan(t), []fixture.CorruptionDetail{fault}, "run-1", "bench-fixture", fixture.ScatteredArticleBytes); err == nil {
+		t.Fatal("an article chosen at 716800 bytes was withheld from a 768000-byte seed")
+	}
+}

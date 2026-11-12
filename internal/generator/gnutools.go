@@ -120,7 +120,7 @@ func caseUsesGNUTools(archiveCase fixture.ArchiveCase) bool {
 		// homework.
 		return true
 	}
-	return archiveCase.InnerArchive != fixture.NoInnerArchive || archiveCase.Sidecar != fixture.NoSidecar
+	return archiveCase.InnerArchive != fixture.NoInnerArchive || archiveCase.Sidecar != fixture.NoSidecar || caseNestsFormat(archiveCase, fixture.Tar)
 }
 
 func buildGNUToolsImage(ctx context.Context, config Config, toolchain GNUToolsToolchain) error {

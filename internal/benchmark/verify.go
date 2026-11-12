@@ -441,14 +441,18 @@ func isWeaverOutputMarker(candidate discoveredFile) (bool, error) {
 // is never mistaken for recovery material. A corpus seeded before the source
 // volumes were recorded names nothing here, and stays as strict as it was.
 func allowedRetainedRepairMaterial(m fixture.GeneratedManifest) []fixture.FileDigest {
+	var allowed []fixture.FileDigest
+	// A nested layer's PAR2 set is recovery material too, met one unpack in.
+	for _, layer := range m.NestedLayers {
+		allowed = append(allowed, layer.RecoveryFiles...)
+	}
 	if len(m.SourceArchiveFiles) == 0 {
-		return nil
+		return allowed
 	}
 	source := make(map[string]bool, len(m.SourceArchiveFiles))
 	for _, f := range m.SourceArchiveFiles {
 		source[f.Path] = true
 	}
-	var allowed []fixture.FileDigest
 	for _, f := range m.ArchiveFiles {
 		if source[f.Path] {
 			continue

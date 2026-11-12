@@ -39,7 +39,7 @@ func caseUsesSevenZip(archiveCase fixture.ArchiveCase) bool {
 	case fixture.Zip:
 		return true
 	}
-	return false
+	return caseNestsFormat(archiveCase, fixture.SevenZip, fixture.Zip)
 }
 
 func buildSevenZipImage(ctx context.Context, config Config, toolchain SevenZipToolchain) error {

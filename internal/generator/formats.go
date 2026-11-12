@@ -24,6 +24,7 @@ type writerToolchains struct {
 	RAR      Toolchain
 	PAR2     *PAR2Toolchain
 	PAR3     *PAR3Toolchain
+	Rarpar   *RarparToolchain
 	SevenZip *SevenZipToolchain
 	GNUTools *GNUToolsToolchain
 	UUCodec  *uucodec.Toolchain
@@ -192,6 +193,9 @@ func verifyArchive(
 ) error {
 	if archiveCase.InnerArchive != fixture.NoInnerArchive {
 		return verifyWrappedArchive(ctx, config, archiveCase, writers, caseDir, primary, expected)
+	}
+	if archiveCase.Nested != "" {
+		return verifyNestedArchive(ctx, config, archiveCase, writers, caseDir, primary, expected)
 	}
 	kind, err := resolveWriterKind(archiveCase, writers)
 	if err != nil {

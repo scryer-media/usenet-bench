@@ -3,6 +3,7 @@ package generator
 import (
 	"context"
 	"fmt"
+	"math/bits"
 	"os"
 	"path"
 	"path/filepath"
@@ -25,11 +26,86 @@ func selectedCasesRequirePAR3(cases []fixture.ArchiveCase, selected map[string]b
 		if len(selected) > 0 && !selected[archiveCase.ID] {
 			continue
 		}
-		if archiveCase.RepairProfile.UsesPAR3() {
+		if archiveCase.RepairProfile.EmbedsPAR3() {
 			return true
 		}
 	}
 	return false
+}
+
+// selectedCasesRequireRarpar reports whether any selected case posts a
+// standalone PAR3 set, which rarpar writes.
+func selectedCasesRequireRarpar(cases []fixture.ArchiveCase, selected map[string]bool) bool {
+	for _, archiveCase := range cases {
+		if len(selected) > 0 && !selected[archiveCase.ID] {
+			continue
+		}
+		if profile := archiveCase.RepairProfile; profile.UsesPAR3() && !profile.EmbedsPAR3() {
+			return true
+		}
+	}
+	return false
+}
+
+func buildRarparImage(ctx context.Context, config Config, toolchain RarparToolchain) error {
+	args := []string{
+		"build", "--platform", toolchain.Platform,
+		"--tag", toolchain.Image,
+		"--file", config.RarparDockerfilePath,
+		"--build-arg", "RARPAR_URL=" + toolchain.URL,
+		"--build-arg", "RARPAR_SHA256=" + toolchain.SHA256,
+		filepath.Dir(config.RarparDockerfilePath),
+	}
+	if err := runCommand(ctx, config.DockerBinary, args...); err != nil {
+		return fmt.Errorf("build rarpar image %s: %w", toolchain.ID, err)
+	}
+	return nil
+}
+
+// runRarpar runs rarpar inside the case directory's archive folder, for the
+// reason runPAR3 gives: a PAR3 set records its inputs by their path relative
+// to the working directory, and a client downloads the post into one flat
+// folder.
+func runRarpar(ctx context.Context, dockerBinary string, toolchain RarparToolchain, caseDir string, rarparArgs ...string) error {
+	args := []string{
+		"run", "--rm", "--platform", toolchain.Platform,
+		"--user", callerDockerUser(),
+		"--mount", "type=bind,src=" + caseDir + ",dst=/work",
+		"--workdir", "/work/archive",
+		toolchain.Image,
+	}
+	args = append(args, rarparArgs...)
+	return runCommand(ctx, dockerBinary, args...)
+}
+
+// fftCapacityLog2 is the recovery capacity an FFT set has to declare when it
+// is created: the smallest power of two that holds one cohort's recovery
+// blocks. The exponent is part of the set's identity, so it is derived from
+// the post and never guessed. A cohort's source blocks and its capacity
+// together have to fit the 65536-point transform.
+func fftCapacityLog2(sources []fixture.FileDigest, blockSize int64, recoveryBlocks, redundancyPercent, cohorts int) (int, error) {
+	if blockSize < 1 {
+		return 0, fmt.Errorf("PAR3 block size %d is invalid", blockSize)
+	}
+	cohorts = max(cohorts, 1)
+	var blocks int64
+	for _, source := range sources {
+		blocks += (source.Size + blockSize - 1) / blockSize
+	}
+	recovery := int64(recoveryBlocks)
+	if recovery == 0 {
+		recovery = (blocks*int64(redundancyPercent) + 99) / 100
+	}
+	perCohort := (recovery + int64(cohorts) - 1) / int64(cohorts)
+	if blocks < 1 || perCohort < 1 {
+		return 0, fmt.Errorf("a PAR3 set of %d source blocks and %d recovery blocks is empty", blocks, recovery)
+	}
+	capacityLog2 := bits.Len64(uint64(perCohort - 1))
+	inputs := (blocks + int64(cohorts) - 1) / int64(cohorts)
+	if capacityLog2 > 15 || inputs+int64(1)<<capacityLog2 > 65536 {
+		return 0, fmt.Errorf("%d source blocks and %d recovery blocks in %d FFT cohort(s) exceed the 65536-point transform", blocks, recovery, cohorts)
+	}
+	return capacityLog2, nil
 }
 
 func buildPAR3Image(ctx context.Context, config Config, toolchain PAR3Toolchain) error {
@@ -66,17 +142,21 @@ func runPAR3(ctx context.Context, dockerBinary string, toolchain PAR3Toolchain, 
 
 // par3Parameters is the creation recipe and fault for each PAR3 profile. The
 // light and heavy-withheld recipes are the PAR2 ones on purpose; see the
-// profile declarations.
+// profile declarations. Every standalone set is written with the FFT
+// Reed-Solomon code; only the embedded lane, which the reference writes,
+// leaves the code to its writer.
 type par3Recipe struct {
 	code       string
-	codeArg    string
 	redundancy int
 	withheld   int
 	flips      int
 	// articlesPerMille is set for the scattered profiles, whose blocks are
 	// one article each and whose fault is withheld articles.
 	articlesPerMille int
-	// cohorts, when above one, asks the reference for that many interleaved
+	// lostArticles is set for the article-loss profiles, whose fault is
+	// whole articles withheld from a post with a declared shape.
+	lostArticles bool
+	// cohorts, when above one, asks rarpar for that many interleaved
 	// FFT cohorts.
 	cohorts int
 }
@@ -84,43 +164,47 @@ type par3Recipe struct {
 func par3Parameters(profile fixture.RepairProfile) (par3Recipe, error) {
 	switch profile {
 	case fixture.PAR3LightRepairProfile:
-		return par3Recipe{code: "cauchy", codeArg: "-e1", redundancy: 10, flips: 1}, nil
+		return par3Recipe{code: "fft", redundancy: 10, flips: 1}, nil
 	case fixture.PAR3HeavyWithheldProfile:
-		return par3Recipe{code: "cauchy", codeArg: "-e1", redundancy: 35, withheld: 1}, nil
+		return par3Recipe{code: "fft", redundancy: 35, withheld: 1}, nil
 	case fixture.PAR3FFTHeavyWithheldProfile:
-		return par3Recipe{code: "fft", codeArg: "-e8", redundancy: 35, withheld: 1, flips: 1}, nil
+		return par3Recipe{code: "fft", redundancy: 35, withheld: 1, flips: 1}, nil
 	case fixture.PAR3InsideLightProfile:
 		// insert chooses its own block size and code, so only the redundancy
 		// is the harness's choice.
 		return par3Recipe{code: "reference-default", redundancy: 10, flips: par3InsideFaults}, nil
 	case fixture.PAR3FFTScatteredLightProfile, fixture.PAR3FFTScatteredHeavyProfile:
 		perMille, redundancy, _ := profile.ScatteredDamage()
-		return par3Recipe{code: "fft", codeArg: "-e8", redundancy: redundancy, articlesPerMille: perMille}, nil
+		return par3Recipe{code: "fft", redundancy: redundancy, articlesPerMille: perMille}, nil
+	case fixture.PAR3ArticlesLightProfile:
+		return par3Recipe{code: "fft", lostArticles: true}, nil
+	case fixture.PAR3FFTArticlesHeavyProfile:
+		return par3Recipe{code: "fft", lostArticles: true}, nil
 	case fixture.PAR3FFTPastPAR2CapProfile:
 		perMille, redundancy, _ := profile.ScatteredDamage()
-		return par3Recipe{code: "fft", codeArg: "-e8", redundancy: redundancy, articlesPerMille: perMille, cohorts: 2}, nil
+		return par3Recipe{code: "fft", redundancy: redundancy, articlesPerMille: perMille, cohorts: 2}, nil
 	default:
 		return par3Recipe{}, fmt.Errorf("repair profile %q is not a PAR3 profile", profile)
 	}
 }
 
 // applyPAR3Profile writes the PAR3 material, injects the declared fault and
-// proves the reference can repair exactly what a client will receive.
+// proves its writer can repair exactly what a client will receive.
 func applyPAR3Profile(ctx context.Context, in repairInputs) (*fixture.PAR3Details, []fixture.CorruptionDetail, []fixture.FileDigest, error) {
-	if in.PAR3Toolchain == nil {
-		return nil, nil, nil, fmt.Errorf("PAR3 repair fixture requires the pinned PAR3 toolchain")
-	}
 	profile := in.Case.RepairProfile
 	recipe, err := par3Parameters(profile)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	details := &fixture.PAR3Details{
-		Toolchain:         in.PAR3Toolchain.ManifestID(),
 		Code:              recipe.code,
 		RedundancyPercent: recipe.redundancy,
 	}
 	if profile.EmbedsPAR3() {
+		if in.PAR3Toolchain == nil {
+			return nil, nil, nil, fmt.Errorf("embedded PAR3 repair fixture requires the pinned PAR3 reference toolchain")
+		}
+		details.Toolchain = in.PAR3Toolchain.ManifestID()
 		faults, err := embedPAR3(ctx, in, recipe, details)
 		if err != nil {
 			return nil, nil, nil, err
@@ -131,6 +215,11 @@ func applyPAR3Profile(ctx context.Context, in repairInputs) (*fixture.PAR3Detail
 		return details, faults, nil, nil
 	}
 
+	if in.Writers.Rarpar == nil {
+		return nil, nil, nil, fmt.Errorf("PAR3 repair fixture requires the pinned rarpar toolchain")
+	}
+	rarpar := *in.Writers.Rarpar
+	details.Toolchain = rarpar.ManifestID()
 	names := make([]string, 0, len(in.SourceArchives))
 	for _, source := range in.SourceArchives {
 		name, err := archiveRelativeName(source.Path)
@@ -143,16 +232,31 @@ func applyPAR3Profile(ctx context.Context, in repairInputs) (*fixture.PAR3Detail
 	if recipe.articlesPerMille > 0 {
 		details.BlockSize = fixture.ScatteredArticleBytes
 	}
-	details.Arguments = []string{
-		"create", "-q", recipe.codeArg,
-		fmt.Sprintf("-r%d", recipe.redundancy),
-		fmt.Sprintf("-s%d", details.BlockSize),
+	recovery := []string{"--recovery-percent", fmt.Sprint(recipe.redundancy)}
+	shape := in.Case.RecoveryShape
+	if shape.Declared() {
+		// A declared shape is a real post's block size and recovery block
+		// count, which replace the fixed block and the percentage.
+		details.BlockSize = shape.SliceBytes
+		details.RecoveryBlocks = shape.RecoveryBlocks
+		details.RedundancyPercent = 0
+		recovery = []string{"--recovery-count", fmt.Sprint(shape.RecoveryBlocks)}
+	} else if recipe.lostArticles {
+		return nil, nil, nil, fmt.Errorf("repair profile %q needs a recovery_shape", profile)
 	}
+	capacityLog2, err := fftCapacityLog2(in.SourceArchives, details.BlockSize, details.RecoveryBlocks, recipe.redundancy, recipe.cohorts)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("repair profile %q: %w", profile, err)
+	}
+	details.Arguments = append([]string{
+		"par3", "create",
+		"--codec", "fft", "--capacity-log2", fmt.Sprint(capacityLog2),
+		"--block-size", fmt.Sprint(details.BlockSize),
+	}, recovery...)
 	if recipe.cohorts > 1 {
-		// The reference counts the blocks interleaved between cohorts, so
-		// N cohorts is -i(N-1).
+		// rarpar counts the extra cohorts, so N cohorts is --interleave N-1.
 		details.Cohorts = recipe.cohorts
-		details.Arguments = append(details.Arguments, fmt.Sprintf("-i%d", recipe.cohorts-1))
+		details.Arguments = append(details.Arguments, "--interleave", fmt.Sprint(recipe.cohorts-1))
 	}
 	details.Arguments = append(append(details.Arguments, par3IndexName), names...)
 	if profile.ExceedsPAR2BlockLimit() {
@@ -168,7 +272,7 @@ func applyPAR3Profile(ctx context.Context, in repairInputs) (*fixture.PAR3Detail
 		}
 		details.PAR2AtLimit = &comparison
 	}
-	if err := runPAR3(ctx, in.Config.DockerBinary, *in.PAR3Toolchain, in.CaseDir, details.Arguments...); err != nil {
+	if err := runRarpar(ctx, in.Config.DockerBinary, rarpar, in.CaseDir, details.Arguments...); err != nil {
 		return nil, nil, nil, fmt.Errorf("create PAR3 recovery material: %w", err)
 	}
 	if recipe.articlesPerMille > 0 {
@@ -176,6 +280,19 @@ func applyPAR3Profile(ctx context.Context, in repairInputs) (*fixture.PAR3Detail
 		if err != nil {
 			return nil, nil, nil, err
 		}
+		if err := verifyPAR3Repair(ctx, in, nil, faults); err != nil {
+			return nil, nil, nil, err
+		}
+		return details, faults, nil, nil
+	}
+
+	if recipe.lostArticles {
+		faults, damaged, err := lostArticles(in.SourceArchives, profile, shape)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		details.DamagedBlocks = damaged
+		details.ArticleBytes = shape.ArticleBytes
 		if err := verifyPAR3Repair(ctx, in, nil, faults); err != nil {
 			return nil, nil, nil, err
 		}
@@ -283,7 +400,10 @@ func verifyPAR3Repair(ctx context.Context, in repairInputs, withheld []fixture.F
 		}
 		return nil
 	}
-	if err := runPAR3(ctx, in.Config.DockerBinary, *in.PAR3Toolchain, verifyDir, "repair", "-q", par3IndexName); err != nil {
+	if in.Writers.Rarpar == nil {
+		return fmt.Errorf("PAR3 repair verification requires the pinned rarpar toolchain")
+	}
+	if err := runRarpar(ctx, in.Config.DockerBinary, *in.Writers.Rarpar, verifyDir, "par3", "repair", par3IndexName); err != nil {
 		return fmt.Errorf("PAR3 repair verification: %w", err)
 	}
 	if err := verifyArchive(ctx, in.Config, in.Case, in.Writers, verifyDir, in.FirstVolume, in.ExpectedFiles); err != nil {
