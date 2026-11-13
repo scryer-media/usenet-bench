@@ -23,7 +23,41 @@
     {"id":"sevenzip-store","class":"breadth","writer_era":"7-Zip 26.02 store","generator_toolchain":"rarlab-7.23","archive_writer":"sevenzip-26.02","archive_format":"7z","compressions":["store"],"solid":[false],"encryptions":["none"],"payloads":["incompressible"],"file_count":1,"volume_size":"32m"},
     {"id":"sevenzip-headers","class":"breadth","writer_era":"7-Zip 26.02 store, encrypted headers","generator_toolchain":"rarlab-7.23","archive_writer":"sevenzip-26.02","archive_format":"7z","compressions":["store"],"solid":[false],"encryptions":["headers"],"payloads":["incompressible"],"file_count":1,"volume_size":"32m"},
 
-    {"id":"rar5-7-bluray","class":"breadth","writer_era":"RAR 7.23","generator_toolchain":"rarlab-7.23","archive_format":"rar5","compressions":["store"],"solid":[false],"encryptions":["none"],"payloads":["incompressible"],"payload_layout":"bluray-disc","nzb_order":"scattered","volume_size":"50m"},
+    {"id":"rar5-7-bluray","class":"breadth","writer_era":"RAR 7.23","generator_toolchain":"rarlab-7.23","archive_format":"rar5","compressions":["store","normal"],"solid":[false],"encryptions":["none"],"payloads":["incompressible"],"payload_layout":"bluray-disc","nzb_order":"scattered","volume_size":"50m"},
+
+    {"id":"rar4-393-data","class":"breadth","writer_era":"RAR 3.93 legacy RAR4","generator_toolchain":"rarlab-3.93","archive_format":"rar4","compressions":["normal"],"solid":[true],"encryptions":["data"],"payloads":["incompressible"],"file_count":1,"volume_size":"32m"},
+
+    {"id":"rar4-data","class":"breadth","writer_era":"RAR 4.20","generator_toolchain":"rarlab-4.20","archive_format":"rar4","compressions":["normal"],"solid":[true],"encryptions":["data"],"payloads":["incompressible"],"file_count":1,"volume_size":"32m"},
+
+    {"id":"rar5-5-data","class":"breadth","writer_era":"RAR 5.00","generator_toolchain":"rarlab-5.00","archive_format":"rar5","compressions":["normal"],"solid":[true],"encryptions":["data"],"payloads":["incompressible"],"file_count":1,"volume_size":"32m"},
+
+    {"id":"rar5-6-data","class":"breadth","writer_era":"RAR 6.24","generator_toolchain":"rarlab-6.24","archive_format":"rar5","compressions":["normal"],"solid":[true],"encryptions":["data"],"payloads":["incompressible"],"file_count":1,"volume_size":"32m"},
+
+    {"id":"rar5-7-data","class":"breadth","writer_era":"RAR 7.23","generator_toolchain":"rarlab-7.23","archive_format":"rar5","compressions":["normal"],"solid":[true],"encryptions":["data"],"payloads":["incompressible"],"file_count":1,"volume_size":"32m"},
+
+    {"id":"rar4-393-headers","class":"breadth","writer_era":"RAR 3.93 legacy RAR4","generator_toolchain":"rarlab-3.93","archive_format":"rar4","compressions":["normal"],"solid":[true],"encryptions":["headers"],"payloads":["compressible"],"file_count":1,"volume_size":"32m"},
+
+    {"id":"rar4-headers","class":"breadth","writer_era":"RAR 4.20","generator_toolchain":"rarlab-4.20","archive_format":"rar4","compressions":["normal"],"solid":[true],"encryptions":["headers"],"payloads":["compressible"],"file_count":1,"volume_size":"32m"},
+
+    {"id":"rar5-5-headers","class":"breadth","writer_era":"RAR 5.00","generator_toolchain":"rarlab-5.00","archive_format":"rar5","compressions":["normal"],"solid":[true],"encryptions":["headers"],"payloads":["compressible"],"file_count":1,"volume_size":"32m"},
+
+    {"id":"rar5-6-headers","class":"breadth","writer_era":"RAR 6.24","generator_toolchain":"rarlab-6.24","archive_format":"rar5","compressions":["normal"],"solid":[true],"encryptions":["headers"],"payloads":["compressible"],"file_count":1,"volume_size":"32m"},
+
+    {"id":"rar5-7-headers","class":"breadth","writer_era":"RAR 7.23","generator_toolchain":"rarlab-7.23","archive_format":"rar5","compressions":["normal"],"solid":[true],"encryptions":["headers"],"payloads":["compressible"],"file_count":1,"volume_size":"32m"},
+
+    {"id":"rar4-393-clear","class":"breadth","writer_era":"RAR 3.93 legacy RAR4","generator_toolchain":"rarlab-3.93","archive_format":"rar4","compressions":["normal"],"solid":[false],"encryptions":["none"],"payloads":["incompressible"],"file_count":1,"volume_size":"32m"},
+
+    {"id":"rar4-clear","class":"breadth","writer_era":"RAR 4.20","generator_toolchain":"rarlab-4.20","archive_format":"rar4","compressions":["normal"],"solid":[false],"encryptions":["none"],"payloads":["compressible"],"file_count":1,"volume_size":"32m"},
+
+    {"id":"rar5-7-clear","class":"breadth","writer_era":"RAR 7.23","generator_toolchain":"rarlab-7.23","archive_format":"rar5","compressions":["normal"],"solid":[false],"encryptions":["none"],"payloads":["incompressible"],"file_count":4,"volume_size":"32m"},
+
+    {"id":"rar5-7-store","class":"breadth","writer_era":"RAR 7.23","generator_toolchain":"rarlab-7.23","archive_format":"rar5","compressions":["store"],"solid":[false],"encryptions":["none"],"payloads":["compressible"],"file_count":1,"volume_size":"32m"},
+
+    {"id":"sevenzip-lzma2","class":"breadth","writer_era":"7-Zip 26.02 LZMA2 solid","generator_toolchain":"rarlab-7.23","archive_writer":"sevenzip-26.02","archive_format":"7z","compressions":["normal"],"solid":[true],"encryptions":["none"],"payloads":["compressible"],"file_count":1,"volume_size":"32m"},
+
+    {"id":"repair-rar4-393-recovery","class":"breadth","writer_era":"RAR 3.93 legacy RAR4","generator_toolchain":"rarlab-3.93","archive_format":"rar4","compressions":["normal"],"solid":[false],"encryptions":["none"],"payloads":["incompressible"],"repair_profiles":["rar-recovery-volume-light"],"file_count":1,"volume_size":"32m"},
+
+    {"id":"repair-rar5-recovery","class":"breadth","writer_era":"RAR 7.23","generator_toolchain":"rarlab-7.23","archive_format":"rar5","compressions":["normal"],"solid":[true],"encryptions":["headers"],"payloads":["incompressible"],"repair_profiles":["rar-recovery-volume-heavy"],"file_count":1,"volume_size":"32m"},
 
     {"id":"repair-rar4-store-recovery","class":"breadth","writer_era":"RAR 4.20","generator_toolchain":"rarlab-4.20","archive_format":"rar4","compressions":["store"],"solid":[false],"encryptions":["none"],"payloads":["incompressible"],"repair_profiles":["rar-recovery-volume-light"],"file_count":1,"bytes_per_file":"390700000","recovery_shape":{"slice_bytes":195596,"recovery_blocks":167,"article_bytes":716800},"volume_size":"30m"},
     {"id":"repair-rar5-store-recovery","class":"breadth","writer_era":"RAR 7.23","generator_toolchain":"rarlab-7.23","archive_format":"rar5","compressions":["store"],"solid":[false],"encryptions":["none"],"payloads":["incompressible"],"repair_profiles":["rar-recovery-volume-heavy"],"file_count":1,"bytes_per_file":"390700000","recovery_shape":{"slice_bytes":195596,"recovery_blocks":167,"article_bytes":716800},"volume_size":"30m"},
