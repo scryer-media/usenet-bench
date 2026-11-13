@@ -139,6 +139,9 @@ func TestCheckedInMatrixCarriesThePAR3BreadthLanes(t *testing.T) {
 		"repair-rar5-7-store-scatter-par3-fft-scattered-light-store-nonsolid-none-incompressible":    PAR3FFTScatteredLightProfile,
 		"repair-rar5-7-store-scatter-par3-fft-scattered-heavy-store-nonsolid-none-incompressible":    PAR3FFTScatteredHeavyProfile,
 		"repair-rar5-7-store-pastcap-par3-fft-past-par2-cap-store-nonsolid-none-incompressible":      PAR3FFTPastPAR2CapProfile,
+		"repair-media-par3-fft-damaged-par3-silent-articles-light-store-nonsolid-none-incompressible":     PAR3SilentArticlesLightProfile,
+		"repair-media-par3-fft-damaged-par3-corrupt-articles-light-store-nonsolid-none-incompressible":    PAR3CorruptArticlesLightProfile,
+		"repair-media-par3-fft-damaged-par3-fft-corrupt-articles-heavy-store-nonsolid-none-incompressible": PAR3FFTCorruptArticlesHeavyProfile,
 	}
 	found := 0
 	for _, c := range cases {

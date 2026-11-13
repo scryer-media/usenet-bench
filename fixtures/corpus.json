@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "Declared coverage corpus for isolated client comparison. Each fixture carries the class its matrix set declares (headline: stored RAR of already-compressed media across the writer eras, clear and encrypted, plus PAR2 repair in shapes copied from observed posts of the 2026-10-13 PAR2 census: four single bare media files and the stored RAR form from the 4.20, 5.00 and 7.23 writers, damaged by articles the server refuses; breadth: everything else, including a twelve-file bare media post under one PAR2 set, including the tar, xz, zip, zip64, 7z-codec, RAR-compression, SFV and uuencoded lanes, and seven PAR3 repair lanes that borrow the real PAR2 shapes because no PAR3 post has been observed: all written by rarpar with the FFT Reed-Solomon code except the embedded one: lost-article and withheld-volume repair over stored RAR5, the withheld-volume repair over encrypted headers, light and heavy lost-article repair over one bare media file, repair of a compound fault over twelve bare media files, and PAR3 embedded in a zip, plus four scattered-article lanes over an 8 GiB stored RAR5 set: PAR2 and PAR3 FFT repair of the same withheld articles at 1% and 7%, and one 26 GiB PAR3 FFT lane past PAR2's block limit, where the same 7% loss needs more PAR2 recovery than the same redundancy provides). Fixture counts are coverage choices, not a model of Usenet posting frequency.",
+  "description": "Declared coverage corpus for isolated client comparison. Each fixture carries the class its matrix set declares (headline: stored RAR of already-compressed media across the writer eras, clear and encrypted, plus PAR2 repair in shapes copied from observed posts of the 2026-10-13 PAR2 census: four single bare media files and the stored RAR form from the 4.20, 5.00 and 7.23 writers, damaged by articles the server refuses, and the same shapes damaged by articles that arrive wrong, either silently with valid yEnc CRCs or failing their yEnc CRC; breadth: everything else, including a twelve-file bare media post under one PAR2 set, including the tar, xz, zip, zip64, 7z-codec, RAR-compression, SFV and uuencoded lanes, and seven PAR3 repair lanes that borrow the real PAR2 shapes because no PAR3 post has been observed: all written by rarpar with the FFT Reed-Solomon code except the embedded one: lost-article and withheld-volume repair over stored RAR5, the withheld-volume repair over encrypted headers, light and heavy lost-article repair over one bare media file, repair of a compound fault over twelve bare media files, and PAR3 embedded in a zip, plus four scattered-article lanes over an 8 GiB stored RAR5 set: PAR2 and PAR3 FFT repair of the same withheld articles at 1% and 7%, and one 26 GiB PAR3 FFT lane past PAR2's block limit, where the same 7% loss needs more PAR2 recovery than the same redundancy provides, plus damaged-article twins of the PAR3 media, RAR recovery-record and RAR recovery-volume lanes, whose articles arrive silently wrong or failing their yEnc CRC instead of missing). Fixture counts are coverage choices, not a model of Usenet posting frequency.",
   "fixture_ids": [
     "rar4-393-store-store-nonsolid-none-incompressible",
     "rar4-393-store-store-nonsolid-headers-incompressible",
@@ -122,6 +122,17 @@
     "repair-rar4-393-recovery-rar-recovery-volume-light-normal-nonsolid-none-incompressible",
     "repair-rar5-recovery-rar-recovery-volume-heavy-normal-solid-headers-incompressible",
     "rar5-7-bluray-normal-nonsolid-none-incompressible",
+    "repair-rar5-7-store-par2-damaged-par2-silent-articles-light-store-nonsolid-none-incompressible",
+    "repair-rar5-7-store-par2-damaged-par2-corrupt-articles-light-store-nonsolid-none-incompressible",
+    "repair-media-par2-4m-damaged-par2-corrupt-articles-heavy-store-nonsolid-none-incompressible",
+    "repair-media-par3-fft-damaged-par3-silent-articles-light-store-nonsolid-none-incompressible",
+    "repair-media-par3-fft-damaged-par3-corrupt-articles-light-store-nonsolid-none-incompressible",
+    "repair-media-par3-fft-damaged-par3-fft-corrupt-articles-heavy-store-nonsolid-none-incompressible",
+    "repair-rar5-store-rr-silent-rar-recovery-record-silent-light-store-nonsolid-none-incompressible",
+    "repair-rar5-store-rr-corrupt-rar-recovery-record-corrupt-light-store-nonsolid-none-incompressible",
+    "repair-rar4-store-recovery-damaged-rar-recovery-volume-silent-light-store-nonsolid-none-incompressible",
+    "repair-rar4-store-recovery-damaged-rar-recovery-volume-corrupt-light-store-nonsolid-none-incompressible",
+    "repair-rar5-store-recovery-damaged-rar-recovery-volume-corrupt-heavy-store-nonsolid-none-incompressible",
     "direct-mkv"
   ]
 }

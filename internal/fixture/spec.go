@@ -459,6 +459,39 @@ const (
 	// The FFT set is also split into two interleaved cohorts, which the
 	// reference does unprompted only above 65536 blocks.
 	PAR3FFTPastPAR2CapProfile RepairProfile = "par3-fft-past-par2-cap"
+
+	// The damaged-article profiles are the article-loss lanes with a
+	// different fault: every chosen article arrives, but its data is wrong.
+	// Each one picks exactly the articles its missing-data sibling of the same
+	// shape and severity picks, so the two lanes differ only in the kind of
+	// fault. CorruptArticleBytes says which bytes of an article change.
+	//
+	// A silent profile changes the file before it is posted, so the yEnc
+	// line, part and file CRCs all describe the wrong bytes and the article
+	// decodes clean; only the parity check finds the damage.
+	PAR2SilentArticlesLightProfile      RepairProfile = "par2-silent-articles-light"
+	PAR3SilentArticlesLightProfile      RepairProfile = "par3-silent-articles-light"
+	RARRecoveryRecordSilentLightProfile RepairProfile = "rar-recovery-record-silent-light"
+	// A corrupt profile posts the file intact and then replaces each chosen
+	// article on the server with one whose body was changed after encoding.
+	// The article keeps the original =ybegin, =ypart and =yend lines, so its
+	// declared part CRC no longer matches what it decodes to: a client that
+	// checks the CRC sees a bad article, one that does not gets wrong bytes.
+	// The generator proves both readings repair: the article's bytes changed,
+	// and the article blanked as if it were discarded.
+	PAR2CorruptArticlesLightProfile      RepairProfile = "par2-corrupt-articles-light"
+	PAR2CorruptArticlesHeavyProfile      RepairProfile = "par2-corrupt-articles-heavy"
+	PAR3CorruptArticlesLightProfile      RepairProfile = "par3-corrupt-articles-light"
+	PAR3FFTCorruptArticlesHeavyProfile   RepairProfile = "par3-fft-corrupt-articles-heavy"
+	RARRecoveryRecordCorruptLightProfile RepairProfile = "rar-recovery-record-corrupt-light"
+	// The recovery-volume damaged profiles damage one article in the middle
+	// of each volume the missing-volume sibling would remove, so the same
+	// number of .rev volumes has to rebuild the same number of volumes; here
+	// the volumes arrive, but damaged. Heavy posts twice the .rev volumes and
+	// damages twice the volumes, as the missing-volume heavy lane does.
+	RARRecoveryVolumeSilentLightProfile  RepairProfile = "rar-recovery-volume-silent-light"
+	RARRecoveryVolumeCorruptLightProfile RepairProfile = "rar-recovery-volume-corrupt-light"
+	RARRecoveryVolumeCorruptHeavyProfile RepairProfile = "rar-recovery-volume-corrupt-heavy"
 )
 
 // PAR2BlockLimit is the most source blocks one PAR2 recovery set can hold.
@@ -477,11 +510,45 @@ func (p RepairProfile) Valid() bool {
 		PAR2ArticlesLightProfile, PAR2ArticlesHeavyProfile, PAR3ArticlesLightProfile, PAR3FFTArticlesHeavyProfile,
 		PAR3LightRepairProfile, PAR3HeavyWithheldProfile, PAR3FFTHeavyWithheldProfile, PAR3InsideLightProfile,
 		PAR2ScatteredLightProfile, PAR2ScatteredHeavyProfile, PAR3FFTScatteredLightProfile, PAR3FFTScatteredHeavyProfile,
-		PAR3FFTPastPAR2CapProfile:
+		PAR3FFTPastPAR2CapProfile,
+		PAR2SilentArticlesLightProfile, PAR3SilentArticlesLightProfile, RARRecoveryRecordSilentLightProfile,
+		PAR2CorruptArticlesLightProfile, PAR2CorruptArticlesHeavyProfile, PAR3CorruptArticlesLightProfile, PAR3FFTCorruptArticlesHeavyProfile,
+		RARRecoveryRecordCorruptLightProfile,
+		RARRecoveryVolumeSilentLightProfile, RARRecoveryVolumeCorruptLightProfile, RARRecoveryVolumeCorruptHeavyProfile:
 		return true
 	default:
 		return false
 	}
+}
+
+// SilentlyCorruptsArticles reports whether the profile's fault is articles
+// whose bytes were wrong before they were encoded, so every yEnc check passes.
+func (p RepairProfile) SilentlyCorruptsArticles() bool {
+	switch p {
+	case PAR2SilentArticlesLightProfile, PAR3SilentArticlesLightProfile, RARRecoveryRecordSilentLightProfile, RARRecoveryVolumeSilentLightProfile:
+		return true
+	default:
+		return false
+	}
+}
+
+// CorruptsArticles reports whether the profile's fault is articles whose body
+// on the server fails the yEnc CRC it declares.
+func (p RepairProfile) CorruptsArticles() bool {
+	switch p {
+	case PAR2CorruptArticlesLightProfile, PAR2CorruptArticlesHeavyProfile, PAR3CorruptArticlesLightProfile, PAR3FFTCorruptArticlesHeavyProfile,
+		RARRecoveryRecordCorruptLightProfile,
+		RARRecoveryVolumeCorruptLightProfile, RARRecoveryVolumeCorruptHeavyProfile:
+		return true
+	default:
+		return false
+	}
+}
+
+// DamagesArticles reports whether the profile's fault is articles that arrive
+// with the wrong data, silently or failing their CRC.
+func (p RepairProfile) DamagesArticles() bool {
+	return p.SilentlyCorruptsArticles() || p.CorruptsArticles()
 }
 
 // UsesPAR3 reports whether the profile creates PAR3 recovery material, as
@@ -490,7 +557,8 @@ func (p RepairProfile) UsesPAR3() bool {
 	switch p {
 	case PAR3LightRepairProfile, PAR3HeavyWithheldProfile, PAR3FFTHeavyWithheldProfile, PAR3InsideLightProfile,
 		PAR3FFTScatteredLightProfile, PAR3FFTScatteredHeavyProfile, PAR3FFTPastPAR2CapProfile,
-		PAR3ArticlesLightProfile, PAR3FFTArticlesHeavyProfile:
+		PAR3ArticlesLightProfile, PAR3FFTArticlesHeavyProfile,
+		PAR3SilentArticlesLightProfile, PAR3CorruptArticlesLightProfile, PAR3FFTCorruptArticlesHeavyProfile:
 		return true
 	default:
 		return false
@@ -507,16 +575,28 @@ func (p RepairProfile) WithholdsArticles() bool {
 // LosesArticles reports whether the profile withholds whole articles from a
 // post whose recovery set has a declared real-world shape.
 func (p RepairProfile) LosesArticles() bool {
+	return p.PicksArticles() && !p.DamagesArticles()
+}
+
+// PicksArticles reports whether the profile chooses its faulted articles
+// against a declared shape and severity: the article-loss profiles and their
+// damaged-article siblings.
+func (p RepairProfile) PicksArticles() bool {
 	return p.ArticleLossSeverity() != ""
 }
 
 // ArticleLossSeverity names how much an article-loss profile loses. PAR2 and
-// PAR3 profiles of one severity share it, so they lose the same articles.
+// PAR3 profiles of one severity share it, so they lose the same articles, and
+// a damaged-article profile shares its missing-data sibling's, so it damages
+// the articles that sibling loses.
 func (p RepairProfile) ArticleLossSeverity() string {
 	switch p {
-	case PAR2ArticlesLightProfile, PAR3ArticlesLightProfile, RARRecoveryRecordLightProfile:
+	case PAR2ArticlesLightProfile, PAR3ArticlesLightProfile, RARRecoveryRecordLightProfile,
+		PAR2SilentArticlesLightProfile, PAR3SilentArticlesLightProfile, RARRecoveryRecordSilentLightProfile,
+		PAR2CorruptArticlesLightProfile, PAR3CorruptArticlesLightProfile, RARRecoveryRecordCorruptLightProfile:
 		return "light"
-	case PAR2ArticlesHeavyProfile, PAR3FFTArticlesHeavyProfile:
+	case PAR2ArticlesHeavyProfile, PAR3FFTArticlesHeavyProfile,
+		PAR2CorruptArticlesHeavyProfile, PAR3FFTCorruptArticlesHeavyProfile:
 		return "heavy"
 	default:
 		return ""
@@ -537,8 +617,14 @@ func (p RepairProfile) AcceptsRecoveryShape() bool {
 		PAR3LightRepairProfile, PAR3HeavyWithheldProfile, PAR3FFTHeavyWithheldProfile:
 		return true
 	default:
-		return p.LosesArticles()
+		return p.NeedsRecoveryShape()
 	}
+}
+
+// NeedsRecoveryShape reports whether the profile cannot be built without a
+// declared shape: it picks whole articles, so it needs the article size.
+func (p RepairProfile) NeedsRecoveryShape() bool {
+	return p.PicksArticles() || p.DamagesArticles()
 }
 
 // ArticleLossSlices is how many PAR2 slices an article-loss profile may
@@ -605,7 +691,8 @@ func (p RepairProfile) EmbedsPAR3() bool {
 func (p RepairProfile) UsesPAR2() bool {
 	switch p {
 	case PAR2LightRepairProfile, PAR2HeavyRepairProfile, PAR2HeavyWithheldProfile, PAR2ScatteredLightProfile, PAR2ScatteredHeavyProfile,
-		PAR2ArticlesLightProfile, PAR2ArticlesHeavyProfile:
+		PAR2ArticlesLightProfile, PAR2ArticlesHeavyProfile,
+		PAR2SilentArticlesLightProfile, PAR2CorruptArticlesLightProfile, PAR2CorruptArticlesHeavyProfile:
 		return true
 	default:
 		return false
@@ -615,13 +702,30 @@ func (p RepairProfile) UsesPAR2() bool {
 // UsesRARRecoveryVolumes reports whether the profile posts RAR .rev recovery
 // volumes, which only the RAR writers can produce.
 func (p RepairProfile) UsesRARRecoveryVolumes() bool {
-	return p == RARRecoveryVolumeLightProfile || p == RARRecoveryVolumeHeavyProfile
+	switch p {
+	case RARRecoveryVolumeLightProfile, RARRecoveryVolumeHeavyProfile,
+		RARRecoveryVolumeSilentLightProfile, RARRecoveryVolumeCorruptLightProfile, RARRecoveryVolumeCorruptHeavyProfile:
+		return true
+	default:
+		return false
+	}
+}
+
+// DoublesRARRecoveryVolumes reports whether the profile is a heavy
+// recovery-volume lane, which posts and needs twice the light lane's volumes.
+func (p RepairProfile) DoublesRARRecoveryVolumes() bool {
+	return p == RARRecoveryVolumeHeavyProfile || p == RARRecoveryVolumeCorruptHeavyProfile
 }
 
 // UsesRARRecoveryRecord reports whether the profile's archive carries a RAR
 // recovery record inside each volume.
 func (p RepairProfile) UsesRARRecoveryRecord() bool {
-	return p == RARRecoveryRecordLightProfile
+	switch p {
+	case RARRecoveryRecordLightProfile, RARRecoveryRecordSilentLightProfile, RARRecoveryRecordCorruptLightProfile:
+		return true
+	default:
+		return false
+	}
 }
 
 // redundancyPerMille is the shape's recovery as thousandths of the payload it
@@ -672,7 +776,7 @@ func (c ArchiveCase) RARRecoveryVolumeCount(archiveVolumes int) (int, error) {
 		}
 		count = max(1, int((c.RecoveryShape.redundancyPerMille(payload)*int64(archiveVolumes)+500)/1000))
 	}
-	if c.RepairProfile == RARRecoveryVolumeHeavyProfile {
+	if c.RepairProfile.DoublesRARRecoveryVolumes() {
 		count *= 2
 	}
 	if count >= archiveVolumes {
@@ -1024,8 +1128,8 @@ func (s FixtureSet) validate() error {
 		if err := s.validatePAR3Profile(profile); err != nil {
 			return err
 		}
-		if profile.LosesArticles() && !s.RecoveryShape.Declared() {
-			return fmt.Errorf("fixture set %q cannot use repair_profile %q without a recovery_shape: the lost articles are chosen against a real post's slice and article sizes", s.ID, profile)
+		if profile.NeedsRecoveryShape() && !s.RecoveryShape.Declared() {
+			return fmt.Errorf("fixture set %q cannot use repair_profile %q without a recovery_shape: the faulted articles are chosen against a real post's slice and article sizes", s.ID, profile)
 		}
 		if s.RecoveryShape.Declared() && !profile.AcceptsRecoveryShape() {
 			return fmt.Errorf("fixture set %q declares a recovery_shape, which repair_profile %q does not use", s.ID, profile)
@@ -1034,6 +1138,11 @@ func (s FixtureSet) validate() error {
 		// the uuencode seeder has no such step and would post them all.
 		if profile.WithholdsArticles() && s.Encoding != "" && s.Encoding != YEncEncoding {
 			return fmt.Errorf("fixture set %q cannot use repair_profile %q with encoding %q: withheld articles are a yEnc posting feature", s.ID, profile, s.Encoding)
+		}
+		// A corrupt article is a yEnc article whose body fails the CRC it
+		// declares; uuencode declares none.
+		if profile.CorruptsArticles() && s.Encoding != "" && s.Encoding != YEncEncoding {
+			return fmt.Errorf("fixture set %q cannot use repair_profile %q with encoding %q: a corrupt article fails a yEnc CRC", s.ID, profile, s.Encoding)
 		}
 	}
 	if shape := s.RecoveryShape; shape.Declared() {
@@ -1159,9 +1268,9 @@ func (s FixtureSet) validatePAR3Profile(profile RepairProfile) error {
 			return fmt.Errorf("fixture set %q cannot use repair_profile %q: its payload must exceed %d articles of %d bytes", s.ID, profile, PAR2BlockLimit, ScatteredArticleBytes)
 		}
 	}
-	if profile.WithholdsArticles() {
-		// Scattered damage lands anywhere in the post, so it needs neither a
-		// split container nor spare files.
+	if profile.WithholdsArticles() || profile.PicksArticles() {
+		// Scattered and per-article damage lands anywhere in the post, so it
+		// needs neither a split container nor spare files.
 		return nil
 	}
 	if s.ArchiveFormat == Media {

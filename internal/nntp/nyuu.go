@@ -42,6 +42,12 @@ type NyuuSeedConfig struct {
 	Password     string
 	Group        string
 	SegmentBytes int
+	// PostAddr is host:port of the same server as reachable from this
+	// process. Nyuu posts from inside the Docker network; the damaged copies
+	// of a corrupt-article fixture are posted from here, so they need it.
+	// Only a fixture with corrupt-article faults dials it.
+	PostAddr string
+	PostTLS  bool
 }
 
 type SeedResult struct {
@@ -62,6 +68,9 @@ type SeedResult struct {
 	// WithheldArticles counts the single articles of posted files whose NZB
 	// segments name identifiers that were never posted.
 	WithheldArticles int `json:",omitempty"`
+	// CorruptArticles counts the articles whose NZB segments name a damaged
+	// copy that fails its declared yEnc CRC.
+	CorruptArticles int `json:",omitempty"`
 }
 
 func BuildNyuuImage(ctx context.Context, config NyuuImageConfig) error {
@@ -178,7 +187,22 @@ func SeedWithNyuu(ctx context.Context, config NyuuSeedConfig) (SeedResult, error
 	if err != nil {
 		return SeedResult{}, fmt.Errorf("withhold articles for %q: %w", manifest.Case.ID, err)
 	}
-	if len(plan.Withheld) > 0 || withheldArticles > 0 {
+	corruptArticles := 0
+	if hasCorruptArticles(manifest.Repair.Corruptions) {
+		if config.PostAddr == "" {
+			return SeedResult{}, fmt.Errorf("fixture %q posts corrupt articles, which needs the server's address as reachable from this process", manifest.Case.ID)
+		}
+		session, err := dialNNTP(ctx, UUSeedConfig{Addr: config.PostAddr, TLS: config.PostTLS, Username: config.Username, Password: config.Password, Timeout: defaultUUTimeout})
+		if err != nil {
+			return SeedResult{}, fmt.Errorf("post corrupt articles for %q: %w", manifest.Case.ID, err)
+		}
+		document, corruptArticles, err = corruptArticlesOnServer(session, document, plan, manifest.Repair.Corruptions, fixtureDir, config.RunID, manifest.Case.ID, config.SegmentBytes)
+		session.Close()
+		if err != nil {
+			return SeedResult{}, fmt.Errorf("post corrupt articles for %q: %w", manifest.Case.ID, err)
+		}
+	}
+	if len(plan.Withheld) > 0 || withheldArticles > 0 || corruptArticles > 0 {
 		rewritten, err := MarshalNZB(document.Files)
 		if err != nil {
 			return SeedResult{}, fmt.Errorf("rewrite NZB %s: %w", nzbPath, err)
@@ -213,6 +237,7 @@ func SeedWithNyuu(ctx context.Context, config NyuuSeedConfig) (SeedResult, error
 		NZBFileOrder:     plan.Order,
 		WithheldFiles:    sortedPaths(manifest.WithheldFiles),
 		WithheldArticles: withheldArticles,
+		CorruptArticles:  corruptArticles,
 	}, nil
 }
 

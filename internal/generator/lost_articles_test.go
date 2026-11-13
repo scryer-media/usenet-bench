@@ -7,10 +7,11 @@ import (
 	"github.com/scryer-media/usenet-bench/internal/fixture"
 )
 
-// Every article-loss fixture in the checked-in matrix must be buildable at
-// its declared size: the lost articles are whole articles of the post's own
-// article size, never the first, and they damage no more slices than the
-// post has recovery blocks, counted the way PAR2 counts them, per file.
+// Every article-loss fixture in the checked-in matrix, and every damaged-article
+// twin that picks the same articles, must be buildable at its declared size:
+// the picked articles are whole articles of the post's own article size, never
+// the first, and they damage no more slices than the post has recovery blocks,
+// counted the way PAR2 counts them, per file.
 func TestLostArticlesFitEveryDeclaredShape(t *testing.T) {
 	matrix, err := fixture.LoadMatrix("../../fixtures/matrix.json")
 	if err != nil {
@@ -22,7 +23,7 @@ func TestLostArticlesFitEveryDeclaredShape(t *testing.T) {
 	}
 	checked := 0
 	for _, c := range cases {
-		if !c.RepairProfile.LosesArticles() {
+		if !c.RepairProfile.PicksArticles() {
 			continue
 		}
 		checked++
@@ -104,8 +105,11 @@ func TestPAR3ArticleLossMatchesItsPAR2Twin(t *testing.T) {
 	shape := fixture.RecoveryShape{SliceBytes: 4194304, RecoveryBlocks: 35, ArticleBytes: 640000}
 	sources := []fixture.FileDigest{{Path: "archive/payload-01.mkv", Size: 1449401321}}
 	for par2, par3 := range map[fixture.RepairProfile]fixture.RepairProfile{
-		fixture.PAR2ArticlesLightProfile: fixture.PAR3ArticlesLightProfile,
-		fixture.PAR2ArticlesHeavyProfile: fixture.PAR3FFTArticlesHeavyProfile,
+		fixture.PAR2ArticlesLightProfile:        fixture.PAR3ArticlesLightProfile,
+		fixture.PAR2ArticlesHeavyProfile:        fixture.PAR3FFTArticlesHeavyProfile,
+		fixture.PAR2SilentArticlesLightProfile:  fixture.PAR3SilentArticlesLightProfile,
+		fixture.PAR2CorruptArticlesLightProfile: fixture.PAR3CorruptArticlesLightProfile,
+		fixture.PAR2CorruptArticlesHeavyProfile: fixture.PAR3FFTCorruptArticlesHeavyProfile,
 	} {
 		want, wantDamaged, err := lostArticles(sources, par2, shape)
 		if err != nil {

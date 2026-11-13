@@ -133,7 +133,8 @@ func applyRepairProfile(ctx context.Context, in repairInputs) (fixture.RepairDet
 		if err := verifyPAR2Repair(ctx, in, withheld, nil); err != nil {
 			return fixture.RepairDetails{}, nil, nil, err
 		}
-	case fixture.PAR2ArticlesLightProfile, fixture.PAR2ArticlesHeavyProfile:
+	case fixture.PAR2ArticlesLightProfile, fixture.PAR2ArticlesHeavyProfile,
+		fixture.PAR2SilentArticlesLightProfile, fixture.PAR2CorruptArticlesLightProfile, fixture.PAR2CorruptArticlesHeavyProfile:
 		if in.PAR2Toolchain == nil {
 			return fixture.RepairDetails{}, nil, nil, fmt.Errorf("PAR2 repair fixture requires a PAR2 toolchain")
 		}
@@ -147,6 +148,15 @@ func applyRepairProfile(ctx context.Context, in repairInputs) (fixture.RepairDet
 		faults, damaged, err := lostArticles(in.SourceArchives, profile, shape)
 		if err != nil {
 			return fixture.RepairDetails{}, nil, nil, err
+		}
+		if faults, err = damageArticles(caseDir, profile, faults); err != nil {
+			return fixture.RepairDetails{}, nil, nil, err
+		}
+		if profile.SilentlyCorruptsArticles() {
+			// Only the changed bytes are damaged. A corrupt article keeps the
+			// whole-article count, which is what a client that discards it
+			// has to repair.
+			damaged = damagedSlices(faults, shape.SliceBytes)
 		}
 		details.PAR2SliceBytes = shape.SliceBytes
 		details.PAR2RecoveryBlocks = shape.RecoveryBlocks
@@ -183,7 +193,8 @@ func applyRepairProfile(ctx context.Context, in repairInputs) (fixture.RepairDet
 		details.PAR3 = par3
 		details.Corruptions = faults
 		withheld = held
-	case fixture.RARRecoveryVolumeLightProfile, fixture.RARRecoveryVolumeHeavyProfile:
+	case fixture.RARRecoveryVolumeLightProfile, fixture.RARRecoveryVolumeHeavyProfile,
+		fixture.RARRecoveryVolumeSilentLightProfile, fixture.RARRecoveryVolumeCorruptLightProfile, fixture.RARRecoveryVolumeCorruptHeavyProfile:
 		if archiveCase.ArchiveFormat == fixture.SevenZip {
 			return fixture.RepairDetails{}, nil, nil, fmt.Errorf("repair profile %q is a RAR container feature", profile)
 		}
@@ -203,16 +214,27 @@ func applyRepairProfile(ctx context.Context, in repairInputs) (fixture.RepairDet
 		if err != nil {
 			return fixture.RepairDetails{}, nil, nil, err
 		}
-		faults, err := removeArchiveFiles(caseDir, targets)
-		if err != nil {
+		var faults []fixture.CorruptionDetail
+		if profile.DamagesArticles() {
+			// The volumes the missing-volume sibling removes arrive instead,
+			// each with one damaged article in its middle.
+			picked, err := middleArticles(targets, archiveCase.RecoveryShape.ArticleBytes)
+			if err != nil {
+				return fixture.RepairDetails{}, nil, nil, err
+			}
+			if faults, err = damageArticles(caseDir, profile, picked); err != nil {
+				return fixture.RepairDetails{}, nil, nil, err
+			}
+			details.ArticleBytes = archiveCase.RecoveryShape.ArticleBytes
+		} else if faults, err = removeArchiveFiles(caseDir, targets); err != nil {
 			return fixture.RepairDetails{}, nil, nil, err
 		}
 		details.RARRecoveryVolumes = recoveryVolumes
 		details.Corruptions = faults
-		if err := verifyRARRecoveryVolumes(ctx, config.DockerBinary, in.RARToolchain, archiveCase, caseDir, in.FirstVolume); err != nil {
+		if err := verifyRARRecoveryVolumes(ctx, config.DockerBinary, in.RARToolchain, archiveCase, caseDir, in.FirstVolume, faults); err != nil {
 			return fixture.RepairDetails{}, nil, nil, err
 		}
-	case fixture.RARRecoveryRecordLightProfile:
+	case fixture.RARRecoveryRecordLightProfile, fixture.RARRecoveryRecordSilentLightProfile, fixture.RARRecoveryRecordCorruptLightProfile:
 		// The archive was written with its recovery record; the profile only
 		// loses articles, the same ones the PAR2 lane of this shape loses.
 		percent, err := archiveCase.RARRecoveryRecordPercent()
@@ -222,6 +244,9 @@ func applyRepairProfile(ctx context.Context, in repairInputs) (fixture.RepairDet
 		shape := archiveCase.RecoveryShape
 		faults, _, err := lostArticles(in.SourceArchives, profile, shape)
 		if err != nil {
+			return fixture.RepairDetails{}, nil, nil, err
+		}
+		if faults, err = damageArticles(caseDir, profile, faults); err != nil {
 			return fixture.RepairDetails{}, nil, nil, err
 		}
 		details.RARRecoveryRecordPercent = percent
@@ -398,12 +423,21 @@ func withholdArchiveFiles(caseDir string, targets []fixture.FileDigest) ([]fixtu
 }
 
 func verifyPAR2Repair(ctx context.Context, in repairInputs, withheld []fixture.FileDigest, articles []fixture.CorruptionDetail) error {
+	for _, blankCorrupt := range articleStagings(articles) {
+		if err := verifyPAR2RepairStaged(ctx, in, withheld, articles, blankCorrupt); err != nil {
+			return fmt.Errorf("%w%s", err, stagingName(articles, blankCorrupt))
+		}
+	}
+	return nil
+}
+
+func verifyPAR2RepairStaged(ctx context.Context, in repairInputs, withheld []fixture.FileDigest, articles []fixture.CorruptionDetail, blankCorrupt bool) error {
 	verifyDir, err := copyArchiveForRepairVerification(in.CaseDir, withheld)
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(verifyDir)
-	if err := blankWithheldArticles(verifyDir, articles); err != nil {
+	if err := stageArticleFaults(verifyDir, articles, blankCorrupt); err != nil {
 		return err
 	}
 	if err := runPAR2(ctx, in.Config.DockerBinary, *in.PAR2Toolchain, verifyDir, "repair", "-q", "archive/fixture.par2"); err != nil {
@@ -438,12 +472,34 @@ func verifyPAR2Repair(ctx context.Context, in repairInputs, withheld []fixture.F
 	return nil
 }
 
-func verifyRARRecoveryVolumes(ctx context.Context, dockerBinary string, toolchain Toolchain, archiveCase fixture.ArchiveCase, caseDir, firstVolume string) error {
+// verifyRARRecoveryVolumes proves the recovery volumes rebuild what a client
+// receives: the set less its removed volumes, or the set with its damaged
+// articles in each reading a client can hold them.
+func verifyRARRecoveryVolumes(ctx context.Context, dockerBinary string, toolchain Toolchain, archiveCase fixture.ArchiveCase, caseDir, firstVolume string, faults []fixture.CorruptionDetail) error {
+	for _, blankCorrupt := range articleStagings(faults) {
+		if err := verifyRARRecoveryVolumesStaged(ctx, dockerBinary, toolchain, archiveCase, caseDir, firstVolume, faults, blankCorrupt); err != nil {
+			return fmt.Errorf("%w%s", err, stagingName(faults, blankCorrupt))
+		}
+	}
+	return nil
+}
+
+func verifyRARRecoveryVolumesStaged(ctx context.Context, dockerBinary string, toolchain Toolchain, archiveCase fixture.ArchiveCase, caseDir, firstVolume string, faults []fixture.CorruptionDetail, blankCorrupt bool) error {
 	verifyDir, err := copyArchiveForRepairVerification(caseDir, nil)
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(verifyDir)
+	if err := stageArticleFaults(verifyDir, faults, blankCorrupt); err != nil {
+		return err
+	}
+	if archiveCase.RepairProfile.DamagesArticles() {
+		// The damaged set must not test clean before the repair, or the
+		// reconstruction below proves nothing.
+		if err := testRARArchive(ctx, dockerBinary, toolchain, archiveCase, verifyDir, firstVolume); err == nil {
+			return fmt.Errorf("the damaged RAR set tests clean before reconstruction: the damage missed the archive data")
+		}
+	}
 	reconstructArgs := []string{"rc", "-idq", "-y"}
 	if archiveCase.RequiresPassword() {
 		reconstructArgs = append(reconstructArgs, "-p"+fixture.FixturePassword)
@@ -465,12 +521,21 @@ func verifyRARRecoveryVolumes(ctx context.Context, dockerBinary string, toolchai
 // rebuilt.<name> when it had to reconstruct the headers, and writes it to the
 // working directory.
 func verifyRARRecoveryRecord(ctx context.Context, dockerBinary string, toolchain Toolchain, archiveCase fixture.ArchiveCase, caseDir, firstVolume string, faults []fixture.CorruptionDetail) error {
+	for _, blankCorrupt := range articleStagings(faults) {
+		if err := verifyRARRecoveryRecordStaged(ctx, dockerBinary, toolchain, archiveCase, caseDir, firstVolume, faults, blankCorrupt); err != nil {
+			return fmt.Errorf("%w%s", err, stagingName(faults, blankCorrupt))
+		}
+	}
+	return nil
+}
+
+func verifyRARRecoveryRecordStaged(ctx context.Context, dockerBinary string, toolchain Toolchain, archiveCase fixture.ArchiveCase, caseDir, firstVolume string, faults []fixture.CorruptionDetail, blankCorrupt bool) error {
 	verifyDir, err := copyArchiveForRepairVerification(caseDir, nil)
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(verifyDir)
-	if err := blankWithheldArticles(verifyDir, faults); err != nil {
+	if err := stageArticleFaults(verifyDir, faults, blankCorrupt); err != nil {
 		return err
 	}
 	repaired := map[string]bool{}

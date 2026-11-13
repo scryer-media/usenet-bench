@@ -86,6 +86,9 @@ func TestChainPhasePlanNamesAgreeWithTheirStorageProfile(t *testing.T) {
 var recoveryVolumeProfileMarkers = []string{
 	string(fixture.RARRecoveryVolumeLightProfile),
 	string(fixture.RARRecoveryVolumeHeavyProfile),
+	string(fixture.RARRecoveryVolumeSilentLightProfile),
+	string(fixture.RARRecoveryVolumeCorruptLightProfile),
+	string(fixture.RARRecoveryVolumeCorruptHeavyProfile),
 }
 
 func namesARecoveryVolumeFixture(id string) bool {

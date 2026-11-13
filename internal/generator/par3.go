@@ -176,9 +176,9 @@ func par3Parameters(profile fixture.RepairProfile) (par3Recipe, error) {
 	case fixture.PAR3FFTScatteredLightProfile, fixture.PAR3FFTScatteredHeavyProfile:
 		perMille, redundancy, _ := profile.ScatteredDamage()
 		return par3Recipe{code: "fft", redundancy: redundancy, articlesPerMille: perMille}, nil
-	case fixture.PAR3ArticlesLightProfile:
+	case fixture.PAR3ArticlesLightProfile, fixture.PAR3SilentArticlesLightProfile, fixture.PAR3CorruptArticlesLightProfile:
 		return par3Recipe{code: "fft", lostArticles: true}, nil
-	case fixture.PAR3FFTArticlesHeavyProfile:
+	case fixture.PAR3FFTArticlesHeavyProfile, fixture.PAR3FFTCorruptArticlesHeavyProfile:
 		return par3Recipe{code: "fft", lostArticles: true}, nil
 	case fixture.PAR3FFTPastPAR2CapProfile:
 		perMille, redundancy, _ := profile.ScatteredDamage()
@@ -291,6 +291,12 @@ func applyPAR3Profile(ctx context.Context, in repairInputs) (*fixture.PAR3Detail
 		if err != nil {
 			return nil, nil, nil, err
 		}
+		if faults, err = damageArticles(in.CaseDir, profile, faults); err != nil {
+			return nil, nil, nil, err
+		}
+		if profile.SilentlyCorruptsArticles() {
+			damaged = damagedSlices(faults, shape.SliceBytes)
+		}
 		details.DamagedBlocks = damaged
 		details.ArticleBytes = shape.ArticleBytes
 		if err := verifyPAR3Repair(ctx, in, nil, faults); err != nil {
@@ -372,12 +378,21 @@ func embedPAR3(ctx context.Context, in repairInputs, recipe par3Recipe, details 
 }
 
 func verifyPAR3Repair(ctx context.Context, in repairInputs, withheld []fixture.FileDigest, articles []fixture.CorruptionDetail) error {
+	for _, blankCorrupt := range articleStagings(articles) {
+		if err := verifyPAR3RepairStaged(ctx, in, withheld, articles, blankCorrupt); err != nil {
+			return fmt.Errorf("%w%s", err, stagingName(articles, blankCorrupt))
+		}
+	}
+	return nil
+}
+
+func verifyPAR3RepairStaged(ctx context.Context, in repairInputs, withheld []fixture.FileDigest, articles []fixture.CorruptionDetail, blankCorrupt bool) error {
 	verifyDir, err := copyArchiveForRepairVerification(in.CaseDir, withheld)
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(verifyDir)
-	if err := blankWithheldArticles(verifyDir, articles); err != nil {
+	if err := stageArticleFaults(verifyDir, articles, blankCorrupt); err != nil {
 		return err
 	}
 	if in.Case.RepairProfile.EmbedsPAR3() {

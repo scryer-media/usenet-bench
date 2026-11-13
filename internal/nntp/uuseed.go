@@ -502,6 +502,25 @@ func (s *nntpSession) body(messageID string) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
+// head reads one article's header lines back, unfolded only as far as the
+// server sent them.
+func (s *nntpSession) head(messageID string) ([]string, error) {
+	id, err := s.text.Cmd("HEAD <%s>", messageID)
+	if err != nil {
+		return nil, err
+	}
+	s.text.StartResponse(id)
+	defer s.text.EndResponse(id)
+	code, message, err := s.text.ReadCodeLine(-1)
+	if err != nil {
+		return nil, err
+	}
+	if code != 221 {
+		return nil, fmt.Errorf("HEAD refused: %d %s", code, message)
+	}
+	return s.text.ReadDotLines()
+}
+
 func (s *nntpSession) Close() {
 	if s.text != nil {
 		_, _ = s.text.Cmd("QUIT")

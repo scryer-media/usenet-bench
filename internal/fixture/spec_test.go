@@ -299,7 +299,8 @@ func TestCheckedInMatrixClassesTheHeadlineAsRealPostShapes(t *testing.T) {
 		}
 		switch c.RepairProfile {
 		case CleanRepairProfile:
-		case PAR2ArticlesLightProfile, PAR2ArticlesHeavyProfile, PAR2HeavyWithheldProfile:
+		case PAR2ArticlesLightProfile, PAR2ArticlesHeavyProfile, PAR2HeavyWithheldProfile,
+			PAR2SilentArticlesLightProfile, PAR2CorruptArticlesLightProfile, PAR2CorruptArticlesHeavyProfile:
 			// A headline repair copies an observed post, so its PAR2
 			// geometry is declared rather than left at the fixed default.
 			if !c.RecoveryShape.Declared() {
@@ -310,8 +311,8 @@ func TestCheckedInMatrixClassesTheHeadlineAsRealPostShapes(t *testing.T) {
 		}
 		// Bare media is what most real posts are, and it is only in the
 		// headline class as a PAR2 repair.
-		if c.ArchiveFormat == Media && !c.RepairProfile.LosesArticles() {
-			t.Fatalf("headline media fixture %s is not an article-loss PAR2 repair", c.ID)
+		if c.ArchiveFormat == Media && !c.RepairProfile.PicksArticles() {
+			t.Fatalf("headline media fixture %s is not a lost- or damaged-article PAR2 repair", c.ID)
 		}
 	}
 	if headline == 0 {
@@ -419,7 +420,7 @@ func TestRARRecoveryKindsBorrowThePAR2ShapesRedundancy(t *testing.T) {
 				t.Fatalf("%s does not carry the RAR PAR2 post's shape", c.ID)
 			}
 			want := 1
-			if c.RepairProfile == RARRecoveryVolumeHeavyProfile {
+			if c.RepairProfile.DoublesRARRecoveryVolumes() {
 				want = 2
 			}
 			if count, err := c.RARRecoveryVolumeCount(13); err != nil || count != want {
@@ -431,8 +432,10 @@ func TestRARRecoveryKindsBorrowThePAR2ShapesRedundancy(t *testing.T) {
 			}
 		}
 	}
-	if records != 2 || volumes != 2 {
-		t.Fatalf("matrix has %d recovery-record and %d shaped recovery-volume fixtures, want 2 and 2", records, volumes)
+	// Two missing-data lanes of each kind, plus the damaged-article twins:
+	// two recovery-record lanes and three recovery-volume lanes.
+	if records != 4 || volumes != 5 {
+		t.Fatalf("matrix has %d recovery-record and %d shaped recovery-volume fixtures, want 4 and 5", records, volumes)
 	}
 	// Without a shape the counts stay the fixed one and two.
 	bare := ArchiveCase{ID: "bare", RepairProfile: RARRecoveryVolumeHeavyProfile}

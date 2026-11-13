@@ -127,7 +127,7 @@ func seed(args []string) error {
 	flags.StringVar(&uuToolchainPath, "uu-toolchain", "docker/uudeview/toolchain.json", "pinned UUDeview toolchain used by the uuencode lane")
 	flags.StringVar(&uuDockerfile, "uu-dockerfile", "docker/uudeview/Dockerfile", "pinned UUDeview image Dockerfile")
 	flags.BoolVar(&buildUUImage, "build-uu-image", true, "build the pinned UUDeview image before posting a uuencoded fixture")
-	flags.StringVar(&uuAddr, "uu-post-addr", "127.0.0.1:119", "host:port of the NNTP server reachable from this process; the uuencode lane is posted from here rather than by Nyuu inside the Docker network, so it needs an address this machine can dial — the shaper stack publishes plaintext 119 on loopback and passes it through to the same server")
+	flags.StringVar(&uuAddr, "uu-post-addr", "127.0.0.1:119", "host:port of the NNTP server reachable from this process; the uuencode lane, and the damaged copies of a corrupt-article fixture, are posted from here rather than by Nyuu inside the Docker network, so they need an address this machine can dial — the shaper stack publishes plaintext 119 on loopback and passes it through to the same server")
 	flags.BoolVar(&uuTLS, "uu-post-tls", false, "dial --uu-post-addr with TLS")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -195,6 +195,8 @@ func seed(args []string) error {
 			return err
 		}
 	}
+	config.PostAddr = uuAddr
+	config.PostTLS = uuTLS
 	result, err := nntp.SeedWithNyuu(context.Background(), config)
 	if err != nil {
 		return err

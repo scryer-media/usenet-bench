@@ -287,12 +287,25 @@ type PAR2LimitComparison struct {
 // refuses.
 const WithheldArticleFault = "withheld-article"
 
+// ByteFlipFault is the CorruptionDetail kind of bytes changed in the file
+// before it was posted, so the post carries them and every yEnc check passes.
+const ByteFlipFault = "byte-flip"
+
+// CorruptArticleFault is the CorruptionDetail kind of one article posted with
+// a body that fails the yEnc CRC it declares. The file on disk is intact; the
+// seeder posts a damaged copy of the article and points the NZB at it.
+const CorruptArticleFault = "corrupt-article"
+
 // CorruptionDetail records a deterministic mutation or intentional omission.
-// Offset and Length are populated for byte-flip and withheld-article faults.
-// Kind is one of byte-flip, missing-volume (absent from the NZB entirely),
-// withheld-volume (listed in the NZB, never posted) or withheld-article (one
-// article of a posted file whose NZB segment names an identifier that was
-// never posted; Offset and Length are the raw bytes that article carries).
+// Offset and Length are populated for byte-flip, withheld-article and
+// corrupt-article faults. Kind is one of byte-flip (bytes changed before
+// posting), missing-volume (absent from the NZB entirely), withheld-volume
+// (listed in the NZB, never posted), withheld-article (one article of a posted
+// file whose NZB segment names an identifier that was never posted; Offset and
+// Length are the raw bytes that article carries) or corrupt-article (one
+// article whose NZB segment names a damaged copy; Offset and Length are the
+// raw bytes the article carries, and CorruptArticleBytes says which of them
+// the copy changes).
 type CorruptionDetail struct {
 	Kind   string `json:"kind"`
 	Path   string `json:"path"`
