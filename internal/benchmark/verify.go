@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -338,12 +339,18 @@ func pinOutput(fixtureDir, outputDir string, manifest fixture.GeneratedManifest,
 // weaverOutputMarker is the file Weaver writes into each job's completion
 // directory to recognise the directory as its own on a later restart. Its
 // content is "weaver-output-v1:" and the hex BLAKE3 of the directory's
-// canonical path as Weaver saw it, then a newline. That path is the client's
-// view (inside a container, for instance), so the harness checks the form and
-// not the digest.
+// canonical path as Weaver saw it, then a newline. From 0.16.16 Weaver writes
+// "weaver-output-v2:", the decimal id of the job that owns the directory, a
+// colon, then the same digest and newline. That path is the client's view
+// (inside a container, for instance), so the harness checks the form and not
+// the digest.
 const (
-	weaverOutputMarker       = ".weaver-output-dir"
-	weaverOutputMarkerPrefix = "weaver-output-v1:"
+	weaverOutputMarker         = ".weaver-output-dir"
+	weaverOutputMarkerPrefix   = "weaver-output-v1:"
+	weaverOutputMarkerV2Prefix = "weaver-output-v2:"
+	// weaverOutputMarkerMaxSize bounds the read: the v2 prefix, a u64 job id
+	// (20 digits), the colon, the digest and the newline.
+	weaverOutputMarkerMaxSize = len(weaverOutputMarkerV2Prefix) + 20 + 1 + 64 + 1
 )
 
 // nzbFastManifest is the file nzbfast writes into a finished job's directory:
@@ -409,28 +416,45 @@ func isNZBFastManifest(candidate discoveredFile) (bool, error) {
 }
 
 func isWeaverOutputMarker(candidate discoveredFile) (bool, error) {
-	wantSize := int64(len(weaverOutputMarkerPrefix) + 64 + 1)
-	if candidate.size != wantSize {
+	if candidate.size > int64(weaverOutputMarkerMaxSize) {
 		return false, nil
 	}
 	contents, err := os.ReadFile(candidate.path)
 	if err != nil {
 		return false, err
 	}
-	text := string(contents)
-	if !strings.HasPrefix(text, weaverOutputMarkerPrefix) || !strings.HasSuffix(text, "\n") {
+	text, ok := strings.CutSuffix(string(contents), "\n")
+	if !ok {
 		return false, nil
 	}
-	digest := strings.TrimSuffix(strings.TrimPrefix(text, weaverOutputMarkerPrefix), "\n")
-	if len(digest) != 64 {
-		return false, nil
+	if rest, ok := strings.CutPrefix(text, weaverOutputMarkerPrefix); ok {
+		return isLowerHexDigest(rest), nil
 	}
-	for _, r := range digest {
-		if !strings.ContainsRune("0123456789abcdef", r) {
+	if rest, ok := strings.CutPrefix(text, weaverOutputMarkerV2Prefix); ok {
+		jobID, digest, ok := strings.Cut(rest, ":")
+		if !ok || len(jobID) == 0 || len(jobID) > 20 {
 			return false, nil
 		}
+		if _, err := strconv.ParseUint(jobID, 10, 64); err != nil {
+			return false, nil
+		}
+		return isLowerHexDigest(digest), nil
 	}
-	return true, nil
+	return false, nil
+}
+
+// isLowerHexDigest reports whether s is a 64-character lowercase hex digest,
+// the form Weaver writes a BLAKE3 hash in.
+func isLowerHexDigest(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for _, r := range s {
+		if !strings.ContainsRune("0123456789abcdef", r) {
+			return false
+		}
+	}
+	return true
 }
 
 // allowedRetainedRepairMaterial names the posted files a repair lane added on

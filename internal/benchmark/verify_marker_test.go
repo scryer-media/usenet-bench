@@ -9,7 +9,13 @@ import (
 	"github.com/scryer-media/usenet-bench/internal/fixture"
 )
 
-const testWeaverMarker = "weaver-output-v1:" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" + "\n"
+const testWeaverDigest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+const testWeaverMarker = "weaver-output-v1:" + testWeaverDigest + "\n"
+
+// testWeaverMarkerV2 is the form Weaver writes from 0.16.16: the owning job's
+// id ahead of the digest.
+const testWeaverMarkerV2 = "weaver-output-v2:10000:" + testWeaverDigest + "\n"
 
 // markerOutput writes one verified payload into a job directory, plus a marker
 // file at markerDir (relative to the output root) with the given content.
@@ -52,9 +58,16 @@ func bookkeepingOutput(t *testing.T, markerDir, markerName, markerContent string
 }
 
 func TestVerifyClientOutputSetsAsideWeaverMarker(t *testing.T) {
-	for _, dir := range []string{".", "job"} {
-		t.Run(dir, func(t *testing.T) {
-			fixtureDir, outputDir := markerOutput(t, dir, testWeaverMarker)
+	for _, tc := range []struct{ version, dir, content string }{
+		{"v1", ".", testWeaverMarker},
+		{"v1", "job", testWeaverMarker},
+		{"v2", ".", testWeaverMarkerV2},
+		{"v2", "job", testWeaverMarkerV2},
+		{"v2-max-id", "job", "weaver-output-v2:18446744073709551615:" + testWeaverDigest + "\n"},
+	} {
+		dir := tc.dir
+		t.Run(tc.version+"/"+dir, func(t *testing.T) {
+			fixtureDir, outputDir := markerOutput(t, dir, tc.content)
 			verification, err := VerifyClientOutput(fixtureDir, outputDir, Weaver)
 			if err != nil {
 				t.Fatal(err)
@@ -129,8 +142,17 @@ func TestVerifyClientOutputRejectsMarkerOutsideItsExactForm(t *testing.T) {
 		"nested deeper":    {Weaver, "job/sub", testWeaverMarker},
 		"uppercase digest": {Weaver, "job", strings.ToUpper(testWeaverMarker[:len(testWeaverMarker)-1]) + "\n"},
 		"no newline":       {Weaver, "job", testWeaverMarker[:len(testWeaverMarker)-1] + "0"},
-		"other version":    {Weaver, "job", strings.Replace(testWeaverMarker, "v1", "v2", 1)},
+		"other version":    {Weaver, "job", strings.Replace(testWeaverMarker, "v1", "v3", 1)},
 		"short digest":     {Weaver, "job", "weaver-output-v1:0123\n"},
+		"v1 with job id":   {Weaver, "job", "weaver-output-v1:10000:" + testWeaverDigest + "\n"},
+		"v2 without id":    {Weaver, "job", "weaver-output-v2:" + testWeaverDigest + "\n"},
+		"v2 empty id":      {Weaver, "job", "weaver-output-v2::" + testWeaverDigest + "\n"},
+		"v2 signed id":     {Weaver, "job", "weaver-output-v2:+10000:" + testWeaverDigest + "\n"},
+		"v2 non-digit id":  {Weaver, "job", "weaver-output-v2:10a00:" + testWeaverDigest + "\n"},
+		"v2 id overflow":   {Weaver, "job", "weaver-output-v2:18446744073709551616:" + testWeaverDigest + "\n"},
+		"v2 short digest":  {Weaver, "job", "weaver-output-v2:10000:0123\n"},
+		"v2 no newline":    {Weaver, "job", strings.TrimSuffix(testWeaverMarkerV2, "\n")},
+		"v2 nzbget":        {NZBGet, "job", testWeaverMarkerV2},
 	} {
 		t.Run(name, func(t *testing.T) {
 			fixtureDir, outputDir := markerOutput(t, tc.dir, tc.content)
