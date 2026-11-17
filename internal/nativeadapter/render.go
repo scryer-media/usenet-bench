@@ -173,6 +173,16 @@ func renderWeaver(cfg Config) productSpec {
 		startupIops = "50000"
 	}
 	env = append(env, "WEAVER_STARTUP_IOPS="+startupIops)
+	// Skip the per-volume write probe (Weaver 0.17+): a synced scratch write a
+	// real install makes once a week per volume, which every fresh-data-dir
+	// run would otherwise pay inside the measured window — 1.4 s of a 100 Mbit
+	// NFS link in C3. Older versions ignore the variable. An operator value
+	// is honoured for a diagnostic.
+	volumeProbe := os.Getenv("WEAVER_VOLUME_WRITE_PROBE")
+	if volumeProbe == "" {
+		volumeProbe = "off"
+	}
+	env = append(env, "WEAVER_VOLUME_WRITE_PROBE="+volumeProbe)
 	// Weaver takes its master key from the environment, and failing that from
 	// the host's credential store. A native client is launched with a filtered
 	// environment, and on a host where no one is signed in there is no

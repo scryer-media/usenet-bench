@@ -29,6 +29,9 @@ func TestWeaverRenderUsesServiceLaunchAndStockExtractionDefault(t *testing.T) {
 	if strings.Contains(string(spec.Content), "WEAVER_MAX_CONCURRENT_EXTRACTIONS=") {
 		t.Fatalf("native stock configuration must not override Weaver extraction concurrency:\n%s", spec.Content)
 	}
+	if !strings.Contains(string(spec.Content), "WEAVER_VOLUME_WRITE_PROBE=off\n") {
+		t.Fatalf("native Weaver environment lacks the volume write probe skip:\n%s", spec.Content)
+	}
 	if !strings.Contains(string(spec.Content), "WEAVER_STARTUP_IOPS=50000\n") {
 		t.Fatalf("native Weaver environment lacks the Docker-parity startup IOPS pin (probe skip):\n%s", spec.Content)
 	}

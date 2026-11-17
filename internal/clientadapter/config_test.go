@@ -63,6 +63,9 @@ func TestWeaverUsesOneShotCLIWithTelemetryAcknowledgement(t *testing.T) {
 	if !strings.Contains(strings.Join(spec.Environment, "\n"), "WEAVER_STARTUP_IOPS=50000") {
 		t.Fatalf("Weaver environment lacks the pinned startup IOPS (probe skip): %#v", spec.Environment)
 	}
+	if !strings.Contains(strings.Join(spec.Environment, "\n"), "WEAVER_VOLUME_WRITE_PROBE=off") {
+		t.Fatalf("Weaver environment lacks the volume write probe skip: %#v", spec.Environment)
+	}
 }
 
 func TestWeaverQueueUsesServiceAndPreservesControllerOwnership(t *testing.T) {

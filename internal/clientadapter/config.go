@@ -461,6 +461,16 @@ func renderWeaver(c Config, _ bool) ProductSpec {
 		startupIops = "50000"
 	}
 	env = append(env, "WEAVER_STARTUP_IOPS="+startupIops)
+	// Skip the per-volume write probe (Weaver 0.17+): a synced scratch write a
+	// real install makes once a week per volume, which every fresh-data-dir
+	// run would otherwise pay inside the measured window — 1.4 s of a 100 Mbit
+	// NFS link in C3. Older versions ignore the variable. An operator value
+	// is honoured for a diagnostic.
+	volumeProbe := os.Getenv("WEAVER_VOLUME_WRITE_PROBE")
+	if volumeProbe == "" {
+		volumeProbe = "off"
+	}
+	env = append(env, "WEAVER_VOLUME_WRITE_PROBE="+volumeProbe)
 	if c.QueueInput != nil {
 		return ProductSpec{
 			APIPort:       9090,
