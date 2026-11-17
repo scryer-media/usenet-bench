@@ -701,6 +701,11 @@ func validateChainConfig(config ChainConfig) error {
 		if phase.NFS != nil && config.Stack == ChainStackRaw {
 			return fmt.Errorf("phase %s: an NFS storage profile needs the throttled export container, which a raw stack does not run; native lanes are local-storage only", phase.Name)
 		}
+		if config.Stack == ChainStackRaw {
+			if err := refuseNativeNZBFast(phase); err != nil {
+				return err
+			}
+		}
 		if (phase.ServerLink == benchmark.LinkExternal) != (config.Stack == ChainStackExternal) {
 			return fmt.Errorf("phase %s: server_link %q belongs to an %s stack only, and an %s stack measures nothing else", phase.Name, benchmark.LinkExternal, ChainStackExternal, ChainStackExternal)
 		}
@@ -1986,4 +1991,31 @@ func chainLogger(out io.Writer) func(string, ...any) {
 	return func(format string, args ...any) {
 		fmt.Fprintf(out, "=== %s %s\n", time.Now().UTC().Format(time.RFC3339), fmt.Sprintf(format, args...))
 	}
+}
+
+// refuseNativeNZBFast keeps nzbfast off every raw stack. nzbfast is measured
+// from its published image on the Docker lane only and never runs on a native
+// rig, so a native phase may not name it as a client, an exclusion or a
+// summary baseline.
+func refuseNativeNZBFast(phase ChainPhase) error {
+	nzbfast := string(benchmark.NZBFast)
+	for _, baseline := range phase.SummarizeBaselines {
+		if baseline == nzbfast {
+			return fmt.Errorf("phase %s: %s never runs on a native rig; drop it from summarize_baselines", phase.Name, nzbfast)
+		}
+	}
+	if phase.PlanSpec == nil {
+		return nil
+	}
+	for _, client := range phase.PlanSpec.Clients {
+		if client == nzbfast {
+			return fmt.Errorf("phase %s: %s never runs on a native rig; drop it from plan_spec.clients", phase.Name, nzbfast)
+		}
+	}
+	for _, exclusion := range phase.PlanSpec.ExcludeClients {
+		if exclusion.Client == nzbfast {
+			return fmt.Errorf("phase %s: %s never runs on a native rig; drop its exclude_clients entries", phase.Name, nzbfast)
+		}
+	}
+	return nil
 }

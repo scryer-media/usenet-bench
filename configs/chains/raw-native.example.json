@@ -236,8 +236,7 @@
         "clients": [
           "weaver",
           "sabnzbd",
-          "nzbget",
-          "nzbfast"
+          "nzbget"
         ],
         "transports": [
           "tls"
@@ -276,26 +275,6 @@
             "reason": "SABnzbd does not use RAR recovery volumes (.rev) and did not finish this fixture in any block of the 2026-09-05 run; recorded as did-not-finish without re-running it"
           },
           {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar4-393-recovery-rar-recovery-volume-light-normal-nonsolid-none-incompressible",
-            "reason": "nzbfast does not use RAR recovery volumes (.rev): it downloads them and then fails the unpack, so the fixture is recorded as did-not-finish rather than re-run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar4-store-recovery-rar-recovery-volume-light-store-nonsolid-none-incompressible",
-            "reason": "nzbfast does not use RAR recovery volumes (.rev): it downloads them and then fails the unpack, so the fixture is recorded as did-not-finish rather than re-run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar5-recovery-rar-recovery-volume-heavy-normal-solid-headers-incompressible",
-            "reason": "nzbfast does not use RAR recovery volumes (.rev): it downloads them and then fails the unpack, so the fixture is recorded as did-not-finish rather than re-run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar5-store-recovery-rar-recovery-volume-heavy-store-nonsolid-none-incompressible",
-            "reason": "nzbfast does not use RAR recovery volumes (.rev): it downloads them and then fails the unpack, so the fixture is recorded as did-not-finish rather than re-run"
-          },
-          {
             "client": "sabnzbd",
             "fixture_id": "repair-rar4-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
             "reason": "SABnzbd is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
@@ -314,16 +293,6 @@
             "client": "nzbget",
             "fixture_id": "repair-rar5-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
             "reason": "NZBGet is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar4-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
-            "reason": "nzbfast is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar5-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
-            "reason": "nzbfast is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
           },
           {
             "client": "sabnzbd",
@@ -341,21 +310,6 @@
             "reason": "SABnzbd does not use RAR recovery volumes (.rev), and the damaged volumes can be rebuilt only from them; excluded on the same capability grounds as its missing-volume sibling, not from a measured run"
           },
           {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar4-store-recovery-damaged-rar-recovery-volume-silent-light-store-nonsolid-none-incompressible",
-            "reason": "nzbfast does not use RAR recovery volumes (.rev), and the damaged volume can be rebuilt only from them; excluded on the same capability grounds as its missing-volume sibling, not from a measured run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar4-store-recovery-damaged-rar-recovery-volume-corrupt-light-store-nonsolid-none-incompressible",
-            "reason": "nzbfast does not use RAR recovery volumes (.rev), and the damaged volume can be rebuilt only from them; excluded on the same capability grounds as its missing-volume sibling, not from a measured run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar5-store-recovery-damaged-rar-recovery-volume-corrupt-heavy-store-nonsolid-none-incompressible",
-            "reason": "nzbfast does not use RAR recovery volumes (.rev), and the damaged volumes can be rebuilt only from them; excluded on the same capability grounds as its missing-volume sibling, not from a measured run"
-          },
-          {
             "client": "sabnzbd",
             "fixture_id": "repair-rar5-store-rr-silent-rar-recovery-record-silent-light-store-nonsolid-none-incompressible",
             "reason": "SABnzbd is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
@@ -374,16 +328,6 @@
             "client": "nzbget",
             "fixture_id": "repair-rar5-store-rr-corrupt-rar-recovery-record-corrupt-light-store-nonsolid-none-incompressible",
             "reason": "NZBGet is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar5-store-rr-silent-rar-recovery-record-silent-light-store-nonsolid-none-incompressible",
-            "reason": "nzbfast is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar5-store-rr-corrupt-rar-recovery-record-corrupt-light-store-nonsolid-none-incompressible",
-            "reason": "nzbfast is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
           }
         ]
       }
@@ -403,8 +347,7 @@
         "clients": [
           "weaver",
           "sabnzbd",
-          "nzbget",
-          "nzbfast"
+          "nzbget"
         ],
         "transports": [
           "tls"
@@ -475,8 +418,7 @@
         "clients": [
           "weaver",
           "sabnzbd",
-          "nzbget",
-          "nzbfast"
+          "nzbget"
         ],
         "transports": [
           "tls"
@@ -494,23 +436,12 @@
             "client": "sabnzbd",
             "fixture_id": "repair-rar5-store-recovery-rar-recovery-volume-heavy-store-nonsolid-none-incompressible",
             "reason": "SABnzbd does not use RAR recovery volumes (.rev) and did not finish this fixture in any block of the 2026-09-05 run; recorded as did-not-finish without re-running it"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar4-store-recovery-rar-recovery-volume-light-store-nonsolid-none-incompressible",
-            "reason": "nzbfast does not use RAR recovery volumes (.rev): it downloads them and then fails the unpack, so the fixture is recorded as did-not-finish rather than re-run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar5-store-recovery-rar-recovery-volume-heavy-store-nonsolid-none-incompressible",
-            "reason": "nzbfast does not use RAR recovery volumes (.rev): it downloads them and then fails the unpack, so the fixture is recorded as did-not-finish rather than re-run"
           }
         ]
       },
       "summarize_baselines": [
         "sabnzbd",
-        "nzbget",
-        "nzbfast"
+        "nzbget"
       ],
       "minimum_blocks": 3
     },
@@ -529,8 +460,7 @@
         "clients": [
           "weaver",
           "sabnzbd",
-          "nzbget",
-          "nzbfast"
+          "nzbget"
         ],
         "transports": [
           "tls"
@@ -541,8 +471,7 @@
       },
       "summarize_baselines": [
         "sabnzbd",
-        "nzbget",
-        "nzbfast"
+        "nzbget"
       ],
       "minimum_blocks": 3
     },
@@ -561,8 +490,7 @@
         "clients": [
           "weaver",
           "sabnzbd",
-          "nzbget",
-          "nzbfast"
+          "nzbget"
         ],
         "transports": [
           "tls"
@@ -587,8 +515,7 @@
         "clients": [
           "weaver",
           "sabnzbd",
-          "nzbget",
-          "nzbfast"
+          "nzbget"
         ],
         "transports": [
           "plaintext"
@@ -627,26 +554,6 @@
             "reason": "SABnzbd does not use RAR recovery volumes (.rev) and did not finish this fixture in any block of the 2026-09-05 run; recorded as did-not-finish without re-running it"
           },
           {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar4-393-recovery-rar-recovery-volume-light-normal-nonsolid-none-incompressible",
-            "reason": "nzbfast does not use RAR recovery volumes (.rev): it downloads them and then fails the unpack, so the fixture is recorded as did-not-finish rather than re-run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar4-store-recovery-rar-recovery-volume-light-store-nonsolid-none-incompressible",
-            "reason": "nzbfast does not use RAR recovery volumes (.rev): it downloads them and then fails the unpack, so the fixture is recorded as did-not-finish rather than re-run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar5-recovery-rar-recovery-volume-heavy-normal-solid-headers-incompressible",
-            "reason": "nzbfast does not use RAR recovery volumes (.rev): it downloads them and then fails the unpack, so the fixture is recorded as did-not-finish rather than re-run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar5-store-recovery-rar-recovery-volume-heavy-store-nonsolid-none-incompressible",
-            "reason": "nzbfast does not use RAR recovery volumes (.rev): it downloads them and then fails the unpack, so the fixture is recorded as did-not-finish rather than re-run"
-          },
-          {
             "client": "sabnzbd",
             "fixture_id": "repair-rar4-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
             "reason": "SABnzbd is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
@@ -665,16 +572,6 @@
             "client": "nzbget",
             "fixture_id": "repair-rar5-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
             "reason": "NZBGet is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar4-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
-            "reason": "nzbfast is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar5-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
-            "reason": "nzbfast is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
           },
           {
             "client": "sabnzbd",
@@ -692,21 +589,6 @@
             "reason": "SABnzbd does not use RAR recovery volumes (.rev), and the damaged volumes can be rebuilt only from them; excluded on the same capability grounds as its missing-volume sibling, not from a measured run"
           },
           {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar4-store-recovery-damaged-rar-recovery-volume-silent-light-store-nonsolid-none-incompressible",
-            "reason": "nzbfast does not use RAR recovery volumes (.rev), and the damaged volume can be rebuilt only from them; excluded on the same capability grounds as its missing-volume sibling, not from a measured run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar4-store-recovery-damaged-rar-recovery-volume-corrupt-light-store-nonsolid-none-incompressible",
-            "reason": "nzbfast does not use RAR recovery volumes (.rev), and the damaged volume can be rebuilt only from them; excluded on the same capability grounds as its missing-volume sibling, not from a measured run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar5-store-recovery-damaged-rar-recovery-volume-corrupt-heavy-store-nonsolid-none-incompressible",
-            "reason": "nzbfast does not use RAR recovery volumes (.rev), and the damaged volumes can be rebuilt only from them; excluded on the same capability grounds as its missing-volume sibling, not from a measured run"
-          },
-          {
             "client": "sabnzbd",
             "fixture_id": "repair-rar5-store-rr-silent-rar-recovery-record-silent-light-store-nonsolid-none-incompressible",
             "reason": "SABnzbd is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
@@ -725,16 +607,6 @@
             "client": "nzbget",
             "fixture_id": "repair-rar5-store-rr-corrupt-rar-recovery-record-corrupt-light-store-nonsolid-none-incompressible",
             "reason": "NZBGet is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar5-store-rr-silent-rar-recovery-record-silent-light-store-nonsolid-none-incompressible",
-            "reason": "nzbfast is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar5-store-rr-corrupt-rar-recovery-record-corrupt-light-store-nonsolid-none-incompressible",
-            "reason": "nzbfast is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
           }
         ]
       }
@@ -754,8 +626,7 @@
         "clients": [
           "weaver",
           "sabnzbd",
-          "nzbget",
-          "nzbfast"
+          "nzbget"
         ],
         "transports": [
           "tls"
@@ -794,26 +665,6 @@
             "reason": "SABnzbd does not use RAR recovery volumes (.rev) and did not finish this fixture in any block of the 2026-09-05 run; recorded as did-not-finish without re-running it"
           },
           {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar4-393-recovery-rar-recovery-volume-light-normal-nonsolid-none-incompressible",
-            "reason": "nzbfast does not use RAR recovery volumes (.rev): it downloads them and then fails the unpack, so the fixture is recorded as did-not-finish rather than re-run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar4-store-recovery-rar-recovery-volume-light-store-nonsolid-none-incompressible",
-            "reason": "nzbfast does not use RAR recovery volumes (.rev): it downloads them and then fails the unpack, so the fixture is recorded as did-not-finish rather than re-run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar5-recovery-rar-recovery-volume-heavy-normal-solid-headers-incompressible",
-            "reason": "nzbfast does not use RAR recovery volumes (.rev): it downloads them and then fails the unpack, so the fixture is recorded as did-not-finish rather than re-run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar5-store-recovery-rar-recovery-volume-heavy-store-nonsolid-none-incompressible",
-            "reason": "nzbfast does not use RAR recovery volumes (.rev): it downloads them and then fails the unpack, so the fixture is recorded as did-not-finish rather than re-run"
-          },
-          {
             "client": "sabnzbd",
             "fixture_id": "repair-rar4-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
             "reason": "SABnzbd is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
@@ -832,16 +683,6 @@
             "client": "nzbget",
             "fixture_id": "repair-rar5-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
             "reason": "NZBGet is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar4-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
-            "reason": "nzbfast is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar5-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
-            "reason": "nzbfast is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
           },
           {
             "client": "sabnzbd",
@@ -859,21 +700,6 @@
             "reason": "SABnzbd does not use RAR recovery volumes (.rev), and the damaged volumes can be rebuilt only from them; excluded on the same capability grounds as its missing-volume sibling, not from a measured run"
           },
           {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar4-store-recovery-damaged-rar-recovery-volume-silent-light-store-nonsolid-none-incompressible",
-            "reason": "nzbfast does not use RAR recovery volumes (.rev), and the damaged volume can be rebuilt only from them; excluded on the same capability grounds as its missing-volume sibling, not from a measured run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar4-store-recovery-damaged-rar-recovery-volume-corrupt-light-store-nonsolid-none-incompressible",
-            "reason": "nzbfast does not use RAR recovery volumes (.rev), and the damaged volume can be rebuilt only from them; excluded on the same capability grounds as its missing-volume sibling, not from a measured run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar5-store-recovery-damaged-rar-recovery-volume-corrupt-heavy-store-nonsolid-none-incompressible",
-            "reason": "nzbfast does not use RAR recovery volumes (.rev), and the damaged volumes can be rebuilt only from them; excluded on the same capability grounds as its missing-volume sibling, not from a measured run"
-          },
-          {
             "client": "sabnzbd",
             "fixture_id": "repair-rar5-store-rr-silent-rar-recovery-record-silent-light-store-nonsolid-none-incompressible",
             "reason": "SABnzbd is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
@@ -892,16 +718,6 @@
             "client": "nzbget",
             "fixture_id": "repair-rar5-store-rr-corrupt-rar-recovery-record-corrupt-light-store-nonsolid-none-incompressible",
             "reason": "NZBGet is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar5-store-rr-silent-rar-recovery-record-silent-light-store-nonsolid-none-incompressible",
-            "reason": "nzbfast is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar5-store-rr-corrupt-rar-recovery-record-corrupt-light-store-nonsolid-none-incompressible",
-            "reason": "nzbfast is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
           }
         ]
       }
@@ -922,8 +738,7 @@
         "clients": [
           "weaver",
           "sabnzbd",
-          "nzbget",
-          "nzbfast"
+          "nzbget"
         ],
         "transports": [
           "tls"
@@ -949,8 +764,7 @@
         "clients": [
           "weaver",
           "sabnzbd",
-          "nzbget",
-          "nzbfast"
+          "nzbget"
         ],
         "transports": [
           "tls"
@@ -970,16 +784,6 @@
             "reason": "SABnzbd does not use RAR recovery volumes (.rev) and did not finish this fixture in any block of the 2026-09-05 run; recorded as did-not-finish without re-running it"
           },
           {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar4-store-recovery-rar-recovery-volume-light-store-nonsolid-none-incompressible",
-            "reason": "nzbfast does not use RAR recovery volumes (.rev): it downloads them and then fails the unpack, so the fixture is recorded as did-not-finish rather than re-run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar5-store-recovery-rar-recovery-volume-heavy-store-nonsolid-none-incompressible",
-            "reason": "nzbfast does not use RAR recovery volumes (.rev): it downloads them and then fails the unpack, so the fixture is recorded as did-not-finish rather than re-run"
-          },
-          {
             "client": "sabnzbd",
             "fixture_id": "repair-rar4-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
             "reason": "SABnzbd is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
@@ -998,23 +802,12 @@
             "client": "nzbget",
             "fixture_id": "repair-rar5-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
             "reason": "NZBGet is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar4-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
-            "reason": "nzbfast is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar5-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
-            "reason": "nzbfast is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
           }
         ]
       },
       "summarize_baselines": [
         "sabnzbd",
-        "nzbget",
-        "nzbfast"
+        "nzbget"
       ],
       "minimum_blocks": 3
     },
@@ -1033,8 +826,7 @@
         "clients": [
           "weaver",
           "sabnzbd",
-          "nzbget",
-          "nzbfast"
+          "nzbget"
         ],
         "transports": [
           "tls"
@@ -1045,8 +837,7 @@
       },
       "summarize_baselines": [
         "sabnzbd",
-        "nzbget",
-        "nzbfast"
+        "nzbget"
       ],
       "minimum_blocks": 3
     },
@@ -1065,8 +856,7 @@
         "clients": [
           "weaver",
           "sabnzbd",
-          "nzbget",
-          "nzbfast"
+          "nzbget"
         ],
         "transports": [
           "plaintext"
@@ -1086,16 +876,6 @@
             "reason": "SABnzbd does not use RAR recovery volumes (.rev) and did not finish this fixture in any block of the 2026-09-05 run; recorded as did-not-finish without re-running it"
           },
           {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar4-store-recovery-rar-recovery-volume-light-store-nonsolid-none-incompressible",
-            "reason": "nzbfast does not use RAR recovery volumes (.rev): it downloads them and then fails the unpack, so the fixture is recorded as did-not-finish rather than re-run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar5-store-recovery-rar-recovery-volume-heavy-store-nonsolid-none-incompressible",
-            "reason": "nzbfast does not use RAR recovery volumes (.rev): it downloads them and then fails the unpack, so the fixture is recorded as did-not-finish rather than re-run"
-          },
-          {
             "client": "sabnzbd",
             "fixture_id": "repair-rar4-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
             "reason": "SABnzbd is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
@@ -1114,23 +894,12 @@
             "client": "nzbget",
             "fixture_id": "repair-rar5-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
             "reason": "NZBGet is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar4-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
-            "reason": "nzbfast is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
-          },
-          {
-            "client": "nzbfast",
-            "fixture_id": "repair-rar5-store-rr-rar-recovery-record-light-store-nonsolid-none-incompressible",
-            "reason": "nzbfast is expected not to finish a post whose only recovery is a RAR recovery record inside the volumes; excluded as an expected did-not-finish, not from a measured run"
           }
         ]
       },
       "summarize_baselines": [
         "sabnzbd",
-        "nzbget",
-        "nzbfast"
+        "nzbget"
       ],
       "minimum_blocks": 3
     },
@@ -1151,8 +920,7 @@
         "clients": [
           "weaver",
           "sabnzbd",
-          "nzbget",
-          "nzbfast"
+          "nzbget"
         ],
         "transports": [
           "tls"
@@ -1163,8 +931,7 @@
       },
       "summarize_baselines": [
         "sabnzbd",
-        "nzbget",
-        "nzbfast"
+        "nzbget"
       ],
       "minimum_blocks": 3
     }

@@ -6,6 +6,8 @@ import (
 	"os"
 	"reflect"
 	"testing"
+
+	"github.com/scryer-media/usenet-bench/internal/benchmark"
 )
 
 const (
@@ -60,7 +62,7 @@ func nativeChainTemplateDrift(docker, native ChainConfig) []string {
 			name         string
 			docker, twin any
 		}{
-			{"plan_spec", phase.PlanSpec, twin.PlanSpec},
+			{"plan_spec", withoutNZBFast(phase.PlanSpec), twin.PlanSpec},
 			{"server_link", phase.ServerLink, twin.ServerLink},
 			{"server_rtt", phase.ServerRTT, twin.ServerRTT},
 			{"article_size", phase.ArticleSize, twin.ArticleSize},
@@ -104,5 +106,49 @@ func TestNativeChainTemplateTwinsEveryDockerPhase(t *testing.T) {
 	}
 	for _, problem := range nativeChainTemplateDrift(docker, native) {
 		t.Error(problem)
+	}
+}
+
+// withoutNZBFast is the Docker plan spec as its native twin must read it.
+// nzbfast never runs on a native rig, so it is the one client the twin drops:
+// from the client list and from the exclusions.
+func withoutNZBFast(spec *ChainPlanSpec) *ChainPlanSpec {
+	if spec == nil {
+		return nil
+	}
+	twin := *spec
+	twin.Clients = nil
+	for _, client := range spec.Clients {
+		if client != string(benchmark.NZBFast) {
+			twin.Clients = append(twin.Clients, client)
+		}
+	}
+	twin.ExcludeClients = nil
+	for _, exclusion := range spec.ExcludeClients {
+		if exclusion.Client != string(benchmark.NZBFast) {
+			twin.ExcludeClients = append(twin.ExcludeClients, exclusion)
+		}
+	}
+	return &twin
+}
+
+// A native rig never runs nzbfast: the template does not name it, and the
+// chain refuses a raw-stack phase that does.
+func TestNativeChainNeverRunsNZBFast(t *testing.T) {
+	native := readChainTemplate(t, nativeChainTemplate)
+	for _, phase := range native.Phases {
+		if err := refuseNativeNZBFast(phase); err != nil {
+			t.Error(err)
+		}
+	}
+	cases := map[string]ChainPhase{
+		"client":    {Name: "c", PlanSpec: &ChainPlanSpec{Clients: []string{"weaver", "nzbfast"}}},
+		"exclusion": {Name: "e", PlanSpec: &ChainPlanSpec{ExcludeClients: []ChainClientExclusion{{Client: "nzbfast", FixtureID: "f", Reason: "r"}}}},
+		"baseline":  {Name: "b", SummarizeBaselines: []string{"sabnzbd", "nzbfast"}},
+	}
+	for name, phase := range cases {
+		if refuseNativeNZBFast(phase) == nil {
+			t.Errorf("%s: a native phase naming nzbfast was accepted", name)
+		}
 	}
 }
