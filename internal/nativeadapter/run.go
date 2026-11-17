@@ -24,19 +24,24 @@ import (
 // Run executes a native product through its public control API. Sequential
 // queue input intentionally starts one fresh native process per fixture so
 // native lanes retain the cold-run lifecycle of the direct benchmark path.
+// Queued and queue-drain input keep one native process alive for the whole
+// suite and submit every job before any terminal wait, as the Docker lane does.
 func Run(ctx context.Context, cfg Config) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
 	if cfg.QueueInput != nil {
-		return runSequentialQueue(ctx, cfg)
+		if cfg.QueueInput.SubmissionMode == benchmark.SubmissionModeSequential {
+			return runSequentialQueue(ctx, cfg)
+		}
+		return runQueueDrain(ctx, cfg)
 	}
 	nativeRun, err := runSingle(ctx, cfg)
 	if err != nil {
 		return err
 	}
 	// AdapterResult carries no terminal status, so the single-fixture path
-	// cannot record a did-not-finish job; only the sequential path can.
+	// cannot record a did-not-finish job; only the queue paths can.
 	if nativeRun.terminalStatus != "succeeded" {
 		return fmt.Errorf("run native job %s: %s", cfg.RunID, nativeRun.terminalError)
 	}
@@ -63,61 +68,113 @@ type nativeRun struct {
 	terminalError  string
 }
 
-func runSingle(ctx context.Context, cfg Config) (nativeRun, error) {
+// nativeSession is one running native client: its rendered configuration,
+// software identity, process with its per-OS telemetry, and a ready public API.
+// The single-fixture path and the queue drain both run through one, so process
+// start, readiness, shutdown and resource accounting are the same for both.
+type nativeSession struct {
+	spec              productSpec
+	identity          string
+	toolchainIdentity string
+	process           *nativeProcess
+	api               *clientadapter.API
+	// clientVersion is the version the client's own API reported, or the
+	// declared one when the API states none.
+	clientVersion string
+}
+
+// startSession renders the product, launches it, and waits for its public API.
+// On error nothing is left running: a process that started is stopped and its
+// accounting released before the error is returned.
+func startSession(ctx context.Context, cfg Config) (*nativeSession, error) {
 	spec, err := renderProduct(cfg)
 	if err != nil {
-		return nativeRun{}, err
+		return nil, err
 	}
 	if err := writeProductFiles(cfg, spec); err != nil {
-		return nativeRun{}, err
+		return nil, err
 	}
 	identity, toolchainIdentity, err := nativeSoftwareIdentity(cfg, spec)
 	if err != nil {
-		return nativeRun{}, err
+		return nil, err
 	}
 	process, err := startProcess(ctx, cfg, spec)
 	if err != nil {
-		return nativeRun{}, err
+		return nil, err
 	}
-	defer process.ensureStopped()
-
-	var queueTiming clientadapter.QueueTiming
-	var completion clientadapter.TerminalObservation
-	api, apiErr := clientadapter.NewAPI(cfg.Client, cfg.APIEndpoint)
-	if apiErr != nil {
-		err = apiErr
-	} else {
+	session := &nativeSession{spec: spec, identity: identity, toolchainIdentity: toolchainIdentity, process: process}
+	api, err := clientadapter.NewAPI(cfg.Client, cfg.APIEndpoint)
+	if err == nil {
 		startupCtx, cancelStartup := context.WithTimeout(ctx, cfg.StartupTimeout)
 		actualVersion, readyErr := waitUntilReady(startupCtx, cfg.PollInterval, api, process)
 		cancelStartup()
 		if readyErr != nil {
 			err = readyErr
 		} else if err = reconcileAPIVersion(cfg.ClientVersion, actualVersion); err == nil {
-			cfg.ClientVersion = recordedAPIVersion(cfg.ClientVersion, actualVersion)
+			session.api = api
+			session.clientVersion = recordedAPIVersion(cfg.ClientVersion, actualVersion)
 		}
 	}
+	if err != nil {
+		_ = process.stop()
+		process.ensureStopped()
+		return nil, err
+	}
+	return session, nil
+}
+
+// stop asks the client to shut down and waits for it, so the process's CPU
+// accounting and log are complete.
+func (session *nativeSession) stop() error { return session.process.stop() }
+
+// close releases the process and its accounting; it force-stops a client that
+// is still running. It is safe after stop.
+func (session *nativeSession) close() { session.process.ensureStopped() }
+
+// resourceMetrics reports the client's resources over the whole process
+// lifetime. It is read after stop, once the process has exited.
+func (session *nativeSession) resourceMetrics() benchmark.ResourceMetrics {
+	peakRSSMeasurement, peakRSSHint := session.process.memoryMeasurement()
+	return benchmark.ResourceMetrics{
+		CPUTimeNanoseconds:   session.process.cpuMeasurement(),
+		InstructionsRetired:  nativeInstructionMeasurement(),
+		PeakRSSBytes:         peakRSSMeasurement,
+		PeakRSSHighWaterHint: peakRSSHint,
+		DeviceWriteBytes:     nativeDeviceWriteMeasurement(),
+	}
+}
+
+func runSingle(ctx context.Context, cfg Config) (nativeRun, error) {
+	session, err := startSession(ctx, cfg)
+	if err != nil {
+		return nativeRun{}, err
+	}
+	defer session.close()
+	cfg.ClientVersion = session.clientVersion
+	spec, identity, toolchainIdentity, api := session.spec, session.identity, session.toolchainIdentity, session.api
+
+	var queueTiming clientadapter.QueueTiming
+	var completion clientadapter.TerminalObservation
 	terminalStatus, terminalError := "succeeded", ""
+	queueTiming, err = api.QueueWithTiming(ctx, cfg.NZBPath, cfg.ArchivePassword)
 	if err == nil {
-		queueTiming, err = api.QueueWithTiming(ctx, cfg.NZBPath, cfg.ArchivePassword)
-		if err == nil {
-			// A job that never reaches a terminal state is bounded here and
-			// reported as the run's error: without a terminal observation
-			// there is no timing to record. A job the client itself failed is
-			// different -- it was observed -- so it becomes a recorded
-			// did-not-finish instead of an adapter error.
-			waitCtx, cancelWait := context.WithTimeout(ctx, cfg.JobTimeout)
-			completion, err = api.WaitCompleteWithObservation(waitCtx, queueTiming.JobID, cfg.PollInterval, queueTiming.SubmissionStartedAt)
-			var terminalFailure *clientadapter.TerminalFailureError
-			switch {
-			case errors.As(err, &terminalFailure):
-				terminalStatus, terminalError, err = "failed", terminalFailure.Error(), nil
-			case err != nil && ctx.Err() == nil && waitCtx.Err() != nil:
-				terminalStatus, terminalError, err = "timed_out", fmt.Sprintf("client job %s did not reach a terminal state within %s of acceptance", queueTiming.JobID, cfg.JobTimeout), nil
-			}
-			cancelWait()
+		// A job that never reaches a terminal state is bounded here and
+		// reported as the run's error: without a terminal observation
+		// there is no timing to record. A job the client itself failed is
+		// different -- it was observed -- so it becomes a recorded
+		// did-not-finish instead of an adapter error.
+		waitCtx, cancelWait := context.WithTimeout(ctx, cfg.JobTimeout)
+		completion, err = api.WaitCompleteWithObservation(waitCtx, queueTiming.JobID, cfg.PollInterval, queueTiming.SubmissionStartedAt)
+		var terminalFailure *clientadapter.TerminalFailureError
+		switch {
+		case errors.As(err, &terminalFailure):
+			terminalStatus, terminalError, err = "failed", terminalFailure.Error(), nil
+		case err != nil && ctx.Err() == nil && waitCtx.Err() != nil:
+			terminalStatus, terminalError, err = "timed_out", fmt.Sprintf("client job %s did not reach a terminal state within %s of acceptance", queueTiming.JobID, cfg.JobTimeout), nil
 		}
+		cancelWait()
 	}
-	stopErr := process.stop()
+	stopErr := session.stop()
 	if err == nil && stopErr != nil {
 		err = stopErr
 	}
@@ -135,7 +192,6 @@ func runSingle(ctx context.Context, cfg Config) (nativeRun, error) {
 			completion, terminalSource = reported, terminalSourceClientLog
 		}
 	}
-	peakRSSMeasurement, peakRSSHint := process.memoryMeasurement()
 	result := benchmark.AdapterResult{
 		SchemaVersion:            7,
 		RunID:                    cfg.RunID,
@@ -154,13 +210,7 @@ func runSingle(ctx context.Context, cfg Config) (nativeRun, error) {
 		ClientIdentity:           identity,
 		ClientVersion:            cfg.ClientVersion,
 		RenderedConfigSHA256:     spec.ConfigSHA256,
-		ResourceMetrics: benchmark.ResourceMetrics{
-			CPUTimeNanoseconds:   process.cpuMeasurement(),
-			InstructionsRetired:  nativeInstructionMeasurement(),
-			PeakRSSBytes:         peakRSSMeasurement,
-			PeakRSSHighWaterHint: peakRSSHint,
-			DeviceWriteBytes:     nativeDeviceWriteMeasurement(),
-		},
+		ResourceMetrics:          session.resourceMetrics(),
 	}
 	if err := result.ValidateFor(benchmark.Run{
 		ID:               cfg.RunID,
@@ -266,6 +316,109 @@ func runSequentialQueue(ctx context.Context, cfg Config) error {
 		return err
 	}
 	return writeQueueResult(cfg.ResultPath, result)
+}
+
+// runQueueDrain keeps one native client alive for the whole suite, submits
+// every job back to back, and monitors all of them to a terminal state. The
+// submission and monitoring are the Docker lane's own (clientadapter's
+// SubmitAndDrain), so the two lanes time the same sequence; only the process
+// and its telemetry are native. Resources are the client's over its whole
+// process lifetime, which contains the drain, so they are suite-level only and
+// no job carries metrics of its own, as on the Docker lane.
+func runQueueDrain(ctx context.Context, cfg Config) error {
+	input := cfg.QueueInput
+	if input == nil {
+		return fmt.Errorf("native queue drain requires queue input")
+	}
+	session, err := startSession(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer session.close()
+	jobs, err := session.api.SubmitAndDrain(ctx, cfg.PollInterval, cfg.JobTimeout, input.Jobs)
+	stopErr := session.stop()
+	if err == nil && stopErr != nil {
+		err = stopErr
+	}
+	if err != nil {
+		return fmt.Errorf("run native %s queue %s: %w", input.SubmissionMode, input.SuiteID, err)
+	}
+	cfg.ClientVersion = session.clientVersion
+	result := nativeQueueDrainResult(cfg, session.identity, session.toolchainIdentity, session.spec.ConfigSHA256, jobs, session.resourceMetrics())
+	if err := validateNativeQueueDrainResult(result, len(input.Jobs)); err != nil {
+		return err
+	}
+	return writeQueueResult(cfg.ResultPath, result)
+}
+
+// nativeQueueDrainResult assembles the suite result. The suite window is taken
+// over every job, because jobs finish out of submission order and a refused
+// copy is recorded after the accepted ones.
+func nativeQueueDrainResult(cfg Config, clientIdentity, toolchainIdentity, renderedConfigSHA256 string, jobs []benchmark.QueueJobResult, metrics benchmark.ResourceMetrics) benchmark.QueueAdapterResult {
+	queueStartedAt, queueCompletedAt := clientadapter.QueueSuiteBounds(jobs)
+	return benchmark.QueueAdapterResult{
+		SchemaVersion:            7,
+		SuiteID:                  cfg.QueueInput.SuiteID,
+		SubmissionMode:           cfg.QueueInput.SubmissionMode,
+		Client:                   cfg.Client,
+		ArchiveToolchain:         cfg.ArchiveToolchain,
+		ArchiveToolchainIdentity: toolchainIdentity,
+		ExecutionTarget:          cfg.ExecutionTarget,
+		Transport:                cfg.Transport,
+		TLSValidation:            cfg.TLSValidation,
+		TransportLabel:           cfg.TransportLabel,
+		ServerLink:               cfg.ServerLink,
+		ArticleProfile:           cfg.ArticleProfile,
+		StorageProfile:           cfg.StorageProfile,
+		QueueStartedAt:           queueStartedAt,
+		QueueCompletedAt:         queueCompletedAt,
+		QueueElapsedNanoseconds:  queueCompletedAt.Sub(queueStartedAt).Nanoseconds(),
+		StatusPollIntervalNanos:  cfg.PollInterval.Nanoseconds(),
+		Jobs:                     jobs,
+		ClientIdentity:           clientIdentity,
+		ClientVersion:            cfg.ClientVersion,
+		RenderedConfigSHA256:     renderedConfigSHA256,
+		Connections:              cfg.Connections,
+		ResourceMetrics:          metrics,
+	}
+}
+
+// validateNativeQueueDrainResult refuses a drain result the controller would
+// refuse, before it is written: every planned job present once, inside the
+// suite window, with a terminal status and, when not finished, a reason.
+func validateNativeQueueDrainResult(result benchmark.QueueAdapterResult, plannedJobs int) error {
+	if result.SubmissionMode != benchmark.SubmissionModeQueueDrain && result.SubmissionMode != benchmark.SubmissionModeQueued {
+		return fmt.Errorf("native queue drain result has submission mode %q", result.SubmissionMode)
+	}
+	if len(result.Jobs) != plannedJobs {
+		return fmt.Errorf("native queue drain result reports %d jobs, expected %d", len(result.Jobs), plannedJobs)
+	}
+	if result.QueueStartedAt.IsZero() || result.QueueCompletedAt.IsZero() || result.QueueCompletedAt.Before(result.QueueStartedAt) {
+		return fmt.Errorf("native queue drain result has invalid suite timing")
+	}
+	if err := result.ResourceMetrics.Validate(); err != nil {
+		return fmt.Errorf("validate native queue resource metrics: %w", err)
+	}
+	seen := make(map[string]bool, len(result.Jobs))
+	for _, job := range result.Jobs {
+		if seen[job.RunID] {
+			return fmt.Errorf("native queue drain result repeats run %s", job.RunID)
+		}
+		seen[job.RunID] = true
+		if job.QueuedAt.Before(result.QueueStartedAt) || job.SubmissionStartedAt.Before(result.QueueStartedAt) || job.CompletionAt.After(result.QueueCompletedAt) {
+			return fmt.Errorf("native queue drain job %s lies outside the suite window", job.RunID)
+		}
+		if job.ResourceMetrics != nil {
+			return fmt.Errorf("native queue drain job %s carries fixture resource metrics; a drain reports suite-level metrics only", job.RunID)
+		}
+		if job.TerminalStatus != "succeeded" && job.TerminalStatus != "failed" && job.TerminalStatus != "timed_out" {
+			return fmt.Errorf("native queue drain job %s has invalid terminal status %q", job.RunID, job.TerminalStatus)
+		}
+		if job.TerminalStatus != "succeeded" && strings.TrimSpace(job.TerminalError) == "" {
+			return fmt.Errorf("native queue drain job %s omits the reason the client did not finish", job.RunID)
+		}
+	}
+	return nil
 }
 
 func reconcileAPIVersion(declared, actual string) error {

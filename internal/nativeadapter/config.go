@@ -301,11 +301,18 @@ func (c Config) Validate() error {
 		if err := c.QueueInput.Validate(); err != nil {
 			return err
 		}
-		if c.QueueInput.SubmissionMode != benchmark.SubmissionModeSequential {
-			return fmt.Errorf("native adapter only supports sequential queue input, got %q", c.QueueInput.SubmissionMode)
-		}
-		if len(c.QueueInput.Jobs) != 1 {
-			return fmt.Errorf("native sequential queue input must contain exactly one job, got %d", len(c.QueueInput.Jobs))
+		switch c.QueueInput.SubmissionMode {
+		case benchmark.SubmissionModeSequential:
+			// Each sequential job is its own cold native process, so the
+			// controller hands the adapter one job at a time.
+			if len(c.QueueInput.Jobs) != 1 {
+				return fmt.Errorf("native sequential queue input must contain exactly one job, got %d", len(c.QueueInput.Jobs))
+			}
+		case benchmark.SubmissionModeQueueDrain, benchmark.SubmissionModeQueued:
+			// One native process takes every job; QueueInput.Validate has
+			// already refused an empty queue.
+		default:
+			return fmt.Errorf("native adapter does not support queue submission mode %q", c.QueueInput.SubmissionMode)
 		}
 		for _, job := range c.QueueInput.Jobs {
 			if _, err := os.Stat(job.NZBPath); err != nil {

@@ -88,19 +88,7 @@ func runQueue(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	// The suite's window has to contain every job's, and a refused copy is
-	// recorded out of submission order, so both bounds are taken over all of
-	// them rather than assuming the first job opened the queue.
-	queueStartedAt := jobs[0].SubmissionStartedAt
-	queueCompletedAt := jobs[0].CompletionAt
-	for _, job := range jobs[1:] {
-		if job.SubmissionStartedAt.Before(queueStartedAt) {
-			queueStartedAt = job.SubmissionStartedAt
-		}
-		if job.CompletionAt.After(queueCompletedAt) {
-			queueCompletedAt = job.CompletionAt
-		}
-	}
+	queueStartedAt, queueCompletedAt := QueueSuiteBounds(jobs)
 
 	telemetryCtx, cancelTelemetry := context.WithTimeout(context.Background(), 15*time.Second)
 	cpuMeasurement := cpu.finish(telemetryCtx)
@@ -153,6 +141,36 @@ func runQueue(ctx context.Context, cfg Config) error {
 		return err
 	}
 	return nil
+}
+
+// QueueSuiteBounds returns the window a queue suite spans. The suite's window
+// has to contain every job's, and jobs complete out of submission order (a
+// refused copy is recorded after the accepted ones), so both bounds are taken
+// over all of them rather than assuming the first job opened the queue or the
+// last one closed it. jobs must not be empty.
+func QueueSuiteBounds(jobs []benchmark.QueueJobResult) (time.Time, time.Time) {
+	queueStartedAt := jobs[0].SubmissionStartedAt
+	queueCompletedAt := jobs[0].CompletionAt
+	for _, job := range jobs[1:] {
+		if job.SubmissionStartedAt.Before(queueStartedAt) {
+			queueStartedAt = job.SubmissionStartedAt
+		}
+		if job.CompletionAt.After(queueCompletedAt) {
+			queueCompletedAt = job.CompletionAt
+		}
+	}
+	return queueStartedAt, queueCompletedAt
+}
+
+// SubmitAndDrain submits every job back to back through the product's public
+// API and then monitors all of them to a terminal state, exactly as the Docker
+// lane's queued and queue-drain modes do: no job waits on another's terminal
+// state before it is submitted, a refused submission is recorded as that
+// copy's did-not-finish, and a job that outlives jobTimeout after acceptance
+// is recorded as timed out. The native launcher drives its drain through this
+// so both lanes measure the same submission and observation sequence.
+func (api *API) SubmitAndDrain(ctx context.Context, interval, jobTimeout time.Duration, inputJobs []benchmark.QueueInputJob) ([]benchmark.QueueJobResult, error) {
+	return runQueuedSubmission(ctx, api.product, interval, jobTimeout, inputJobs)
 }
 
 func runQueuedSubmission(ctx context.Context, api productAPI, interval, jobTimeout time.Duration, inputJobs []benchmark.QueueInputJob) ([]benchmark.QueueJobResult, error) {
